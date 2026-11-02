@@ -1,0 +1,19 @@
+[Unit]
+Description=pi-weixin-connect — 微信 ClawBot ⇄ Pi 独立服务
+After=network-online.target
+Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
+# 按实际安装路径修改；scripts/install-service.sh 会自动生成正确路径
+ExecStart=/usr/bin/env node %h/Agent/Temp/pi-weixin-connect/bin/pi-weixin-connect.mjs --cwd %h --session-id pi-weixin-connect-service
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

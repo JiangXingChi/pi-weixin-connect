@@ -17,12 +17,14 @@ tmp/          临时产物（二维码、测试日志）
 ## 常用命令
 
 ```bash
-node --test test/*.test.mjs        # 全部单测（30 项）
+node --test test/*.test.mjs        # 全部单测（34 项）
 node scripts/login.mjs [--force]   # 扫码登录，凭证写 ~/.pi/agent/.pi-weixin/credentials.json
 node --check src/index.js          # 语法检查
 ```
 
-在 Pi 里：`/wx status`、`/wx login`、`/wx logout`、`/wx log [n]`。
+在 Pi 里：`/wx status`、`/wx login`、`/wx start`、`/wx stop`、`/wx logout`、`/wx log [n]`。
+独立服务（默认）：`service.mode = "standalone"`，插件在任意 Pi 进程里加载时会自动拉起 `bin/pi-weixin-connect.mjs`；
+systemd 单元用 `scripts/install-service.sh` 安装，日志 `~/.pi/agent/pi-weixin-connect.service.log`。
 
 二维码默认落 `/tmp/pi-weixin-connect/qr.png`（0600，登录成功即删）；入站文件落
 `/tmp/pi-weixin-connect/files/`。不要放 `~/.pi/agent`，pi-qq-connect 会按敏感路径拒发。

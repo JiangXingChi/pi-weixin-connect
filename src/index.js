@@ -24,9 +24,20 @@ import {
 import { WeixinGateway } from "./gateway.js";
 import { WeixinBridge, isStaleContextError } from "./session.js";
 import { acquireLock, isProcessAlive, readLock, releaseLock } from "./lock.js";
+import {
+	describeService,
+	isServiceAlive,
+	isServiceProcess,
+	readServiceState,
+	removeServiceState,
+	serviceStatePath,
+	startService,
+	stopService,
+} from "./service.js";
 import { maskId } from "./text.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const SERVICE_BIN = path.resolve(HERE, "..", "bin", "pi-weixin-connect.mjs");
 const VERSION = (() => {
 	try {
 		return JSON.parse(fs.readFileSync(path.resolve(HERE, "..", "package.json"), "utf8")).version ?? "0.0.0";
@@ -171,6 +182,37 @@ export default function createExtension(pi) {
 				return;
 			}
 
+			// 默认 standalone：微信只跑在独立后台进程里。
+			// 当前进程若是服务本身（或显式 inline）才在这里连长轮询。
+			const svc = readServiceState(serviceStatePath(baseDir()));
+			const svcAlive = Boolean(svc && isServiceAlive(svc));
+			const selfService = isServiceProcess(svc);
+			if (!selfService && config.service.mode !== "inline") {
+				if (svcAlive) {
+					stop({ release: true });
+					setStatus("服务在线", `pid ${svc.pid}`);
+					notify(`微信后台服务在线（pid ${svc.pid}），本进程不连长轮询；用 /wx status 查看`, "info");
+					return;
+				}
+				if (svc) removeServiceState(serviceStatePath(baseDir()), svc.pid);
+				stop({ release: true });
+				const started = startService({
+					binPath: SERVICE_BIN,
+					baseDir: baseDir(),
+					cwd: state.ctx?.cwd ?? os.homedir(),
+					sessionId: config.service.sessionId,
+				});
+				if (!started.pid) {
+					state.error = started.error ?? "无法启动后台服务";
+					setStatus(STATE_LABEL.error, state.error);
+					notify(`微信后台服务启动失败：${state.error}\n日志：${started.logFile}`, "warning");
+					return;
+				}
+				setStatus("服务启动中", `pid ${started.pid}`);
+				notify(`已自动启动微信后台服务（pid ${started.pid}）；日志：${started.logFile}`, "info");
+				return;
+			}
+
 			const api = new WeixinApi({
 				baseUrl: config.endpoints.base,
 				cdnBaseUrl: config.endpoints.cdn,
@@ -268,6 +310,7 @@ export default function createExtension(pi) {
 		lines.push(`权限：用户白名单 ${cfg.allowUsers.length} 个${cfg.allowUsers.length === 0 ? "（仅登录者本人）" : ""}`);
 		const lock = readLock(lockFilePath());
 		lines.push(`锁：${lock ? `pid ${lock.pid}（${lock.at}）` : "无"}`);
+		lines.push(`后台服务：${describeService(readServiceState(serviceStatePath(baseDir())))}（模式 ${cfg.service.mode}）`);
 		if (state.bridge) {
 			const s = state.bridge.status;
 			const flags = [s.busy ? "Pi 忙" : "", s.switching ? "切换中" : "", s.stale ? "已暂停" : ""].filter(Boolean).join(" · ");
@@ -344,8 +387,30 @@ export default function createExtension(pi) {
 			loggedIn = true;
 			notify(`微信登录成功：用户 ${maskId(credentials.userId)}`, "info");
 			state.credentials = credentials;
-			stop({ release: true });
-			await start(ctx);
+			const svc = readServiceState(serviceStatePath(baseDir()));
+			if (config.service.mode !== "inline") {
+				// 默认 standalone：登录完成后由独立服务接管；有旧服务就先停掉
+				if (svc && isServiceAlive(svc)) {
+					await stopService(svc, { force: true });
+					removeServiceState(serviceStatePath(baseDir()), svc.pid);
+				}
+				stop({ release: true });
+				const started = startService({
+					binPath: SERVICE_BIN,
+					baseDir: baseDir(),
+					cwd: state.ctx?.cwd ?? os.homedir(),
+					sessionId: config.service.sessionId,
+				});
+				notify(
+					started.pid
+						? `凭证已更新，微信独立服务已启动（pid ${started.pid}）`
+						: `凭证已更新，但服务启动失败：${started.error ?? "未知原因"}`,
+					started.pid ? "info" : "warning",
+				);
+			} else {
+				stop({ release: true });
+				await start(ctx);
+			}
 			dropCredentialsBackup(backup);
 			if (qrShown && !state.gateway) notify("登录成功，但网关没有启动，查看 /wx status 或日志", "warning");
 		} catch (err) {
@@ -367,10 +432,72 @@ export default function createExtension(pi) {
 		}
 	}
 
+	/** 拉起独立后台服务。 */
+	async function startBackground() {
+		const file = serviceStatePath(baseDir());
+		const svc = readServiceState(file);
+		if (svc && isServiceAlive(svc)) {
+			notify(`后台服务已在运行：${describeService(svc)}`, "info");
+			return;
+		}
+		if (svc && !isProcessAlive(svc.pid)) removeServiceState(file, svc.pid);
+		if (!state.credentials) {
+			notify("还没有登录，先 /wx login 扫码", "warning");
+			return;
+		}
+		const cwd = state.ctx?.cwd ?? os.homedir();
+		const started = startService({
+			binPath: SERVICE_BIN,
+			baseDir: baseDir(),
+			cwd,
+			sessionId: state.config?.service?.sessionId ?? "pi-weixin-connect-service",
+		});
+		if (!started.pid) {
+			notify(`后台服务启动失败：${started.error ?? "没有拿到 pid"}\n日志：${started.logFile}`, "warning");
+			return;
+		}
+		let current = readServiceState(file);
+		for (let i = 0; i < 40 && !(current && isServiceAlive(current)); i++) {
+			await sleep(200);
+			current = readServiceState(file);
+		}
+		if (current && isServiceAlive(current)) {
+			// 服务接管长轮询：本进程让出
+			stop({ release: true });
+			setStatus("服务在线", `pid ${current.pid}`);
+			notify(`微信后台服务已启动：${describeService(current)}\n日志：${started.logFile}`, "info");
+		} else {
+			notify(`后台服务启动中（pid ${started.pid}），稍后 /wx status 查看。日志：${started.logFile}`, "warning");
+		}
+	}
+
+	/** 停止独立后台服务；没有服务时断开本进程。 */
+	async function stopBackground(force = false) {
+		const file = serviceStatePath(baseDir());
+		const svc = readServiceState(file);
+		if (svc && isProcessAlive(svc.pid)) {
+			const result = await stopService(svc, { force });
+			if (!result.stopped) {
+				notify(`停止失败：${result.reason}`, "warning");
+				return;
+			}
+			removeServiceState(file, svc.pid);
+			setStatus(STATE_LABEL.stopped);
+			notify("微信后台服务已停止", "info");
+			return;
+		}
+		if (svc) removeServiceState(file, svc.pid);
+		stop({ release: true });
+		notify("已断开本进程的微信连接", "info");
+		setStatus(STATE_LABEL.stopped);
+	}
+
 	const HELP = [
 		"用法：/wx <命令>",
 		"  status        查看登录、长轮询、队列、预算",
 		"  login [--force]  扫码登录（首次或 -14 过期后）",
+		"  start         启动独立后台服务（微信走单独进程）",
+		"  stop [--force] 停止后台服务；没有服务时断开本进程",
 		"  logout        删除本机凭证并断开",
 		"  log [n]       看最近 n 条日志（默认 20）",
 		"",
@@ -393,13 +520,25 @@ export default function createExtension(pi) {
 					case "login":
 						await doLogin(ctx, { force: rest.includes("--force") });
 						return;
-					case "logout":
+					case "start":
+						await startBackground();
+						return;
+					case "stop":
+						await stopBackground(rest.includes("--force"));
+						return;
+					case "logout": {
+						const svc = readServiceState(serviceStatePath(baseDir()));
+						if (svc && isServiceAlive(svc)) {
+							await stopService(svc, { force: true });
+							removeServiceState(serviceStatePath(baseDir()), svc.pid);
+						}
 						stop({ release: true });
 						clearCredentials();
 						state.credentials = undefined;
 						notify("已删除微信凭证并断开连接", "info");
 						setStatus(STATE_LABEL.unconfigured);
 						return;
+					}
 					case "log": {
 						const n = Number(rest[0]) > 0 ? Math.min(Number(rest[0]), 200) : 20;
 						notify(state.logger?.tail(n)?.join("\n") ?? "（没有日志）", "info");

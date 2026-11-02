@@ -25,13 +25,16 @@
 	"files": [
 		"index.js",
 		"src",
+		"bin",
 		"scripts",
+		"packaging",
 		"examples",
 		"README.md"
 	],
 	"scripts": {
 		"test": "node --test test/*.test.mjs",
-		"login": "node scripts/login.mjs"
+		"login": "node scripts/login.mjs",
+		"service": "node bin/pi-weixin-connect.mjs"
 	},
 	"author": "JiangXingChi",
 	"repository": {

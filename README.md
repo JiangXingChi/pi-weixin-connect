@@ -59,10 +59,25 @@ node scripts/login.mjs --force  # 强制重扫，失败会回滚旧凭证
 
 | 命令 | 说明 |
 |---|---|
-| `/wx status` | 登录状态、长轮询、队列、预算 |
-| `/wx login [--force]` | 扫码登录 |
+| `/wx status` | 登录状态、长轮询、后台服务、队列、预算 |
+| `/wx login [--force]` | 扫码登录（服务在跑时会自动重启服务） |
+| `/wx start` | 启动独立后台服务（微信走自己的进程/会话） |
+| `/wx stop [--force]` | 停止独立后台服务 |
 | `/wx logout` | 删除凭证并断开 |
 | `/wx log [n]` | 最近 n 条日志 |
+
+## 独立后台服务（推荐）
+
+微信可以跑在**自己的** `pi --mode rpc` 进程里，和 QQ 服务互不影响：
+
+```bash
+scripts/install-service.sh          # 生成 ~/.config/systemd/user/pi-weixin-connect.service 并启动
+systemctl --user status pi-weixin-connect
+scripts/uninstall-service.sh        # 卸载（不删凭证）
+```
+
+服务在线时，其它 Pi 进程（包括 QQ 服务）只做控制面，不抢长轮询；状态看
+`/wx status` 的“后台服务”一行。服务日志：`~/.pi/agent/pi-weixin-connect.service.log`。
 
 微信里直接发 `/new`、`/model` 等桌面命令属于 P1，尚未接入。
 
@@ -72,6 +87,7 @@ node scripts/login.mjs --force  # 强制重扫，失败会回滚旧凭证
 
 ```json
 {
+  "service": { "mode": "standalone" },
   "allowUsers": [],
   "typing": true,
   "maxChunks": 9,
@@ -86,6 +102,8 @@ node scripts/login.mjs --force  # 强制重扫，失败会回滚旧凭证
 }
 ```
 
+- 默认 `service.mode = "standalone"`：任何 Pi 进程加载本插件时，都只自动拉起独立后台服务，
+  自己不当长轮询；想退回“挂在当前进程”的老行为，才改成 `"inline"`。
 - `allowUsers` 为空 = 只允许扫码登录者本人；填入则按白名单。
 - 出站文件默认只允许 `家目录 / 当前工作目录 / /tmp`，并始终拒绝 `~/.ssh`、`~/.config`、
   `~/.pi/agent`、`/etc` 等敏感路径；需要放宽时填 `files.allowDirs`。

@@ -272,13 +272,17 @@ pi-weixin-connect/
 - 端到端验证用独立的 `pi --mode rpc` 临时进程，未写入 `settings.json`，避免打断当前 QQ 服务；验证后已停止，锁文件已清理。
 - 回复预算、24h 窗口只做了单测；10 条配额与 24h 的真实边界仍待 P1 真机观察。
 
-### P1 待办（未开始）
+### P1 进展（2026-11-02，独立服务已完成）
 
-1. 桌面命令映射：`/new` `/model` `/thinking` `/compact` `/session` `/name` `/tools` `/help`。
-2. `bin/pi-weixin-connect.mjs` 常驻启动器 + 心跳 + 崩溃重拉 + systemd 单元。
-3. `/wx start|stop|take`、服务状态文件、与锁的联动。
-4. 会话切换（`/new`、reload、fork）自愈回归测试。
-5. 把插件装进用户环境（`pi install` 本地路径或 npm），并验证 QQ 服务不受影响。
+- [x] `bin/pi-weixin-connect.mjs` 常驻启动器 + 15s 心跳 + 崩溃重拉（3s→60s 退避）
+- [x] `src/service.js`：状态文件、存活判定、启动/停止、服务进程识别
+- [x] `scripts/install-service.sh` / `uninstall-service.sh` + `packaging/*.service`
+- [x] 默认 `service.mode = "standalone"`：任何 Pi 进程加载插件时自动拉起独立服务，自己只当控制面
+- [x] `/wx start|stop`、`/wx status` 服务行、登录后自动重启服务、logout 停服务
+- [x] 真机：QQ 服务与微信服务并行，QQ 侧日志确认“后台服务在线（pid …），本进程不连长轮询”
+- [ ] 桌面命令映射：`/new` `/model` `/thinking` `/compact` `/session` `/name` `/tools` `/help`
+- [ ] 会话切换（`/new`、reload、fork）自愈回归测试
+- [ ] 发布 npm（用户先用几天再定）
 
 ### 顺序调整（2026-11-02，用户指令）
 
@@ -291,7 +295,7 @@ pi-weixin-connect/
 | 入站 | 图片 CDN 下载 + AES 解密 + base64 作为 Pi 图片输入；文件下载到 `/tmp/pi-weixin-connect/files` 并把路径交给模型；语音用 `voice_item.text` 转写 |
 | 出站 | `[[file:...]]`（≤3 个）→ MD5/尺寸 → `getuploadurl` → AES-128-ECB → CDN POST → `x-encrypted-param` → `sendmessage`（image/file/video） |
 | 限制 | 图片 20MB / 视频 30MB / 文件 200MB；敏感路径与符号链接拒绝；失败降级为一条文字说明 |
-| 测试 | 媒体/桥共 30 项全过（AES 三种密钥、文件标记、上传/下载、入站图片、出站文件、重试、typing、切换暂存） |
+| 测试 | 媒体/桥/服务共 34 项全过（AES 三种密钥、文件标记、上传/下载、入站图片、出站文件、重试、typing、切换暂存） |
 | 待验 | 真机发图 / 真机收文件（需要用户在微信里操作，代码与 mock 已验证，尚未做真机媒体回归） |
 
 ### 多轮审改

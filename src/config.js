@@ -39,6 +39,9 @@ export const DEFAULT_CONFIG = Object.freeze({
 	emptyReply: "（Pi 这轮没有返回文字）",
 	dedupeTtlMs: 10 * 60 * 1000,
 	lock: true,
+	// standalone：微信跑独立后台进程/会话（默认，避免陷进“共享会话”的坑）
+	// inline：挂在当前 Pi 进程里（兼容旧行为）
+	service: { mode: "standalone", sessionId: "pi-weixin-connect-service" },
 	images: { enabled: true, maxCount: 2, maxBytes: 8 * 1024 * 1024 },
 	files: { enabled: true, maxCount: 3, maxBytes: 200 * 1024 * 1024, allowDirs: [] },
 	log: { file: "~/.pi/agent/pi-weixin-connect.log", level: "info", maxBytes: 2 * 1024 * 1024 },
@@ -94,6 +97,9 @@ export function loadConfig() {
 	cfg.sessionWindowHours = intIn(cfg.sessionWindowHours, DEFAULT_CONFIG.sessionWindowHours, 1, 24);
 	cfg.maxQueue = intIn(cfg.maxQueue, DEFAULT_CONFIG.maxQueue, 1, 200);
 	cfg.dedupeTtlMs = intIn(cfg.dedupeTtlMs, DEFAULT_CONFIG.dedupeTtlMs, 1000, 86_400_000);
+	cfg.service = mergeSection(DEFAULT_CONFIG.service, cfg.service);
+	cfg.service.mode = cfg.service.mode === "inline" ? "inline" : "standalone";
+	cfg.service.sessionId = String(cfg.service.sessionId || DEFAULT_CONFIG.service.sessionId).replace(/[^\w.-]/g, "-");
 	cfg.images = mergeSection(DEFAULT_CONFIG.images, cfg.images);
 	cfg.images.enabled = boolIn(cfg.images.enabled, DEFAULT_CONFIG.images.enabled);
 	cfg.images.maxCount = intIn(cfg.images.maxCount, DEFAULT_CONFIG.images.maxCount, 0, 10);

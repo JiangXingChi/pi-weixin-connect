@@ -220,3 +220,21 @@ test("bridge：切换期间暂存也有上限", async () => {
 		await mock.close();
 	}
 });
+
+test("config：默认 standalone，inline 可显式开启", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "piwx-mode-"));
+	const old = process.env.PIWXCONNECT_CONFIG;
+	try {
+		process.env.PIWXCONNECT_CONFIG = path.join(dir, "missing.json");
+		assert.equal(loadConfig().config.service.mode, "standalone");
+
+		const file = path.join(dir, "config.json");
+		fs.writeFileSync(file, JSON.stringify({ service: { mode: "inline" } }));
+		process.env.PIWXCONNECT_CONFIG = file;
+		assert.equal(loadConfig().config.service.mode, "inline");
+	} finally {
+		if (old === undefined) delete process.env.PIWXCONNECT_CONFIG;
+		else process.env.PIWXCONNECT_CONFIG = old;
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
