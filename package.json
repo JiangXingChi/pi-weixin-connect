@@ -1,0 +1,45 @@
+{
+	"name": "pi-weixin-connect",
+	"version": "0.1.0",
+	"description": "微信 ClawBot（iLink）⇄ 当前 Pi 会话：私聊、文本收发、后台常驻",
+	"type": "module",
+	"license": "MIT",
+	"keywords": [
+		"pi-package",
+		"pi",
+		"pi-extension",
+		"wechat",
+		"weixin",
+		"ilink",
+		"clawbot",
+		"bridge"
+	],
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"pi": {
+		"extensions": [
+			"./index.js"
+		]
+	},
+	"files": [
+		"index.js",
+		"src",
+		"scripts",
+		"examples",
+		"README.md"
+	],
+	"scripts": {
+		"test": "node --test test/*.test.mjs",
+		"login": "node scripts/login.mjs"
+	},
+	"author": "JiangXingChi",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/JiangXingChi/pi-weixin-connect.git"
+	},
+	"homepage": "https://github.com/JiangXingChi/pi-weixin-connect",
+	"bugs": {
+		"url": "https://github.com/JiangXingChi/pi-weixin-connect/issues"
+	}
+}

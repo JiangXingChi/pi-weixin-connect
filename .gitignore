@@ -1,0 +1,8 @@
+node_modules/
+tmp/
+*.log
+*.log.1
+*.bak
+*.bak-*
+.pi-weixin/
+credentials.json
