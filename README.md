@@ -76,8 +76,12 @@ systemctl --user status pi-weixin-connect
 scripts/uninstall-service.sh        # 卸载（不删凭证）
 ```
 
-服务在线时，其它 Pi 进程（包括 QQ 服务）只做控制面，不抢长轮询；状态看
-`/wx status` 的“后台服务”一行。服务日志：`~/.pi/agent/pi-weixin-connect.service.log`。
+默认 `service.mode = "standalone"`：**任何** Pi 进程加载插件时，都会自动拉起独立服务，
+自己只做控制面，不会跟微信长轮询抢在一起。装了上面的 systemd 单元时，自动启动会走
+`systemctl --user start`（日志进 journal、可开机自启）；没装时退回 detached 进程。
+
+状态看 `/wx status` 的“后台服务”一行。服务日志：journal 或
+`~/.pi/agent/pi-weixin-connect.service.log`。
 
 微信里直接发 `/new`、`/model` 等桌面命令属于 P1，尚未接入。
 

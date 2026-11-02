@@ -31,6 +31,7 @@ import {
 	readServiceState,
 	removeServiceState,
 	serviceStatePath,
+	startManagedService,
 	startService,
 	stopService,
 } from "./service.js";
@@ -196,7 +197,7 @@ export default function createExtension(pi) {
 				}
 				if (svc) removeServiceState(serviceStatePath(baseDir()), svc.pid);
 				stop({ release: true });
-				const started = startService({
+				const started = await startManagedService({
 					binPath: SERVICE_BIN,
 					baseDir: baseDir(),
 					cwd: state.ctx?.cwd ?? os.homedir(),
@@ -395,7 +396,7 @@ export default function createExtension(pi) {
 					removeServiceState(serviceStatePath(baseDir()), svc.pid);
 				}
 				stop({ release: true });
-				const started = startService({
+				const started = await startManagedService({
 					binPath: SERVICE_BIN,
 					baseDir: baseDir(),
 					cwd: state.ctx?.cwd ?? os.homedir(),
@@ -446,7 +447,7 @@ export default function createExtension(pi) {
 			return;
 		}
 		const cwd = state.ctx?.cwd ?? os.homedir();
-		const started = startService({
+		const started = await startManagedService({
 			binPath: SERVICE_BIN,
 			baseDir: baseDir(),
 			cwd,

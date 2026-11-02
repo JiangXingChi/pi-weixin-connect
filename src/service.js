@@ -6,7 +6,7 @@
  * - `/wx start|stop` 通过 detached spawn / SIGTERM 管理它
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -161,4 +161,37 @@ export function isServiceProcess(state) {
 
 export function defaultCwd() {
 	return os.homedir();
+}
+
+export function hasSystemdUnit() {
+	return fs.existsSync(path.join(os.homedir(), ".config", "systemd", "user", "pi-weixin-connect.service"));
+}
+
+/**
+ * 启动服务：装了 systemd 单元就交给 systemctl（日志进 journal、开机自启一致），
+ * 否则 detached spawn。返回时尽量等到心跳上线。
+ */
+export async function startManagedService({ binPath, baseDir, cwd, sessionId = "pi-weixin-connect-service" }, { waitMs = 8000 } = {}) {
+	const logFile = serviceLogPath(baseDir);
+	let error;
+	if (hasSystemdUnit()) {
+		const res = spawnSync("systemctl", ["--user", "start", "pi-weixin-connect.service"], {
+			encoding: "utf8",
+			timeout: 15_000,
+		});
+		if (res.error) error = res.error.message;
+		else if (res.status !== 0) error = (res.stderr || res.stdout || `systemctl 退出码 ${res.status}`).trim();
+		if (error) return { pid: null, logFile, systemd: true, error };
+	} else {
+		const started = startService({ binPath, baseDir, cwd, sessionId });
+		if (!started.pid) return { ...started, systemd: false };
+	}
+	const stateFile = serviceStatePath(baseDir);
+	const deadline = Date.now() + waitMs;
+	while (Date.now() < deadline) {
+		const state = readServiceState(stateFile);
+		if (state && isServiceAlive(state)) return { pid: state.pid, logFile, systemd: hasSystemdUnit() };
+		await new Promise((resolve) => setTimeout(resolve, 200));
+	}
+	return { pid: null, logFile, systemd: hasSystemdUnit(), error: "服务没有在 8 秒内上线" };
 }
