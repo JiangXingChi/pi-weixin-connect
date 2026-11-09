@@ -10,7 +10,7 @@ Type=simple
 WorkingDirectory=%h
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
 # 按实际安装路径修改；scripts/install-service.sh 会自动生成正确路径
-ExecStart=/usr/bin/env node %h/Agent/Temp/pi-weixin-connect/bin/pi-weixin-connect.mjs --cwd %h --session-id pi-weixin-connect-service
+ExecStart=/usr/bin/env node %h/path/to/pi-weixin-connect/bin/pi-weixin-connect.mjs --cwd %h --session-id pi-weixin-connect-service
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=15

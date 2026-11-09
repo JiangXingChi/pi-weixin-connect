@@ -89,12 +89,15 @@ export function startService({ binPath, baseDir, cwd, sessionId = "pi-weixin-con
 	}
 	let out;
 	try {
-		out = fs.openSync(logFile, "a");
+		out = fs.openSync(logFile, "a", 0o600);
+		const env = { ...process.env };
+		// 不要把自己的 launcher 标记带进子进程，否则嵌套启动时 ppid 判断会错
+		delete env.PIWXCONNECT_SERVICE_PID;
 		const child = spawn(nodePath, [binPath, "--cwd", cwd, "--session-id", sessionId], {
 			cwd,
 			detached: true,
 			stdio: ["ignore", out, out],
-			env: { ...process.env },
+			env,
 		});
 		child.on("error", (err) => {
 			try {
@@ -149,14 +152,13 @@ export async function stopService(state, { timeoutMs = 10_000, intervalMs = 200,
 	return { stopped: false, reason: `进程 ${state.pid} 在 ${timeoutMs}ms 内没有退出` };
 }
 
-/** 当前进程是不是状态文件里那个后台服务（launcher 注入 env，pi 的 ppid = launcher）。 */
-export function isServiceProcess(state) {
-	return Boolean(
-		process.env.PIWXCONNECT_SERVICE_PID &&
-			state &&
-			String(state.pid) === process.env.PIWXCONNECT_SERVICE_PID &&
-			process.ppid === state.pid,
-	);
+/** 当前进程是不是后台服务（launcher 注入 env，pi 的 ppid = launcher）。
+ * 信任 env + ppid，不依赖状态文件：状态文件被删/写坏/被另一个 launcher 覆盖时，
+ * 服务里的 Pi 仍然知道自己就是服务，否则它会把自己当控制面，再拉起一个嵌套服务。
+ */
+export function isServiceProcess() {
+	const pid = process.env.PIWXCONNECT_SERVICE_PID;
+	return Boolean(pid && String(process.ppid) === String(pid));
 }
 
 export function defaultCwd() {
@@ -173,15 +175,26 @@ export function hasSystemdUnit() {
  */
 export async function startManagedService({ binPath, baseDir, cwd, sessionId = "pi-weixin-connect-service" }, { waitMs = 8000 } = {}) {
 	const logFile = serviceLogPath(baseDir);
-	let error;
+	let usedSystemd = false;
 	if (hasSystemdUnit()) {
 		const res = spawnSync("systemctl", ["--user", "start", "pi-weixin-connect.service"], {
 			encoding: "utf8",
 			timeout: 15_000,
 		});
-		if (res.error) error = res.error.message;
-		else if (res.status !== 0) error = (res.stderr || res.stdout || `systemctl 退出码 ${res.status}`).trim();
-		if (error) return { pid: null, logFile, systemd: true, error };
+		const systemdError = res.error
+			? res.error.message
+			: res.status !== 0
+				? (res.stderr || res.stdout || `systemctl 退出码 ${res.status}`).trim()
+				: "";
+		if (!systemdError) {
+			usedSystemd = true;
+		} else {
+			// 容器 / 没有 user bus / 残留 unit：不要卡死在 systemd 上，退回 detached 启动
+			const started = startService({ binPath, baseDir, cwd, sessionId });
+			if (!started.pid) {
+				return { pid: null, logFile, systemd: false, error: `${systemdError}；回退启动失败：${started.error ?? "未知原因"}` };
+			}
+		}
 	} else {
 		const started = startService({ binPath, baseDir, cwd, sessionId });
 		if (!started.pid) return { ...started, systemd: false };
@@ -190,8 +203,8 @@ export async function startManagedService({ binPath, baseDir, cwd, sessionId = "
 	const deadline = Date.now() + waitMs;
 	while (Date.now() < deadline) {
 		const state = readServiceState(stateFile);
-		if (state && isServiceAlive(state)) return { pid: state.pid, logFile, systemd: hasSystemdUnit() };
+		if (state && isServiceAlive(state)) return { pid: state.pid, logFile, systemd: usedSystemd };
 		await new Promise((resolve) => setTimeout(resolve, 200));
 	}
-	return { pid: null, logFile, systemd: hasSystemdUnit(), error: "服务没有在 8 秒内上线" };
+	return { pid: null, logFile, systemd: usedSystemd, error: "服务没有在 8 秒内上线" };
 }

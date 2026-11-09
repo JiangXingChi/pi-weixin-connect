@@ -129,6 +129,8 @@ function launch() {
 		return;
 	}
 	if (launched.stdout) pumpStdout(launched.stdout);
+	// pi 先退出时 stdin 可能异步报 EPIPE；不接住会弄死 launcher
+	launched.stdin?.on("error", () => {});
 	child = launched;
 	let ended = false;
 	const onEnd = (why) => {

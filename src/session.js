@@ -315,6 +315,10 @@ export class WeixinBridge {
 			// 下载期间可能 stop / 开始换会话：别把消息注入到已结束或正在切换的会话
 			if (this.stopped) return;
 			if (this.switching) {
+				if (this.deferred.length >= this.cfg.maxQueue) {
+					this.log?.warn(`切换期间暂存已满（${this.cfg.maxQueue}），丢弃一条消息`);
+					return;
+				}
 				this.deferred.push(item);
 				return;
 			}
@@ -487,21 +491,34 @@ export class WeixinBridge {
 			return;
 		}
 
-		const parsed = this.cfg.files?.enabled
-			? parseFileMarkers(text, {
-					maxCount: this.cfg.files.maxCount,
-					maxBytes: this.cfg.files.maxBytes,
-					allowDirs: this.cfg.files.allowDirs,
-				})
-			: { text, files: [], skipped: [] };
-		for (const skip of parsed.skipped) this.log?.warn(`文件标记被忽略：${skip.path}（${skip.reason}）`);
+		const parsed = parseFileMarkers(text, {
+			maxCount: this.cfg.files?.enabled ? this.cfg.files.maxCount : 0,
+			maxBytes: this.cfg.files?.enabled ? this.cfg.files.maxBytes : 0,
+			allowDirs: this.cfg.files?.allowDirs,
+			// 关闭文件发送时也要把标记从正文里剥掉，否则绝对路径会直接发到微信
+			disabled: !this.cfg.files?.enabled,
+		});
+		for (const skip of parsed.skipped) {
+			this.log?.warn(skip.path ? `文件标记被忽略：${skip.path}（${skip.reason}）` : `文件标记被忽略：${skip.reason}`);
+		}
 
-		const body = this.cfg.replyFormat === "markdown" ? parsed.text.trim() : stripMarkdown(parsed.text);
+		let body = this.cfg.replyFormat === "markdown" ? parsed.text.trim() : stripMarkdown(parsed.text);
+		if (parsed.skipped.length > 0) {
+			const skippedCount = parsed.skipped.reduce((n, skip) => n + (Number(skip.count) || 1), 0);
+			const detail = parsed.skipped
+				.slice(0, 3)
+				.map((skip) => {
+					const name = path.basename(String(skip.path || ""));
+					return name ? `${name}：${skip.reason}` : skip.reason;
+				})
+				.join("；");
+			body = [body, `（${skippedCount} 个文件未发送：${detail}）`].filter(Boolean).join("\n");
+		}
 		const textBudget = Math.max(1, inflight.attemptsLeft - parsed.files.length);
 		const chunks = chunkText(body, {
 			chunkChars: this.cfg.chunkChars,
-			maxChunks: textBudget,
-			overflowHint: "……（内容过长，完整结果见 Pi 终端）",
+			maxChunks: Math.min(textBudget, this.cfg.maxChunks),
+			overflowHint: "……（内容过长，已截断）",
 		});
 
 		for (const chunk of chunks) {

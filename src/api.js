@@ -63,21 +63,32 @@ export class WeixinApi {
 
 	async #request(baseUrl, path, { method = "GET", body, token, timeoutMs = 20_000, signal } = {}) {
 		const url = new URL(path, `${baseUrl.replace(/\/+$/, "")}/`);
-		const controller = signal ? null : new AbortController();
-		const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+		// 外部 signal 只负责“取消”，超时必须自己兜住；两者取并集
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), timeoutMs);
+		const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
 		try {
 			const res = await fetch(url, {
 				method,
 				headers: this.#headers(token),
 				body: body === undefined ? undefined : JSON.stringify(body),
-				signal: signal ?? controller.signal,
+				signal: combined,
 			});
 			const text = await res.text();
 			let data = null;
-			try {
-				data = text ? JSON.parse(text) : null;
-			} catch {
-				data = null;
+			if (text) {
+				try {
+					data = JSON.parse(text);
+				} catch {
+					// 200 + 非 JSON（反代门户页、HTML 错误页）必须当失败，
+					// 否则 getupdates 会把它当空结果，200ms 一次热轮询
+					if (res.ok) {
+						throw new ApiError(`响应不是 JSON：${method} ${url.pathname}`, {
+							status: res.status,
+							body: text.slice(0, 200),
+						});
+					}
+				}
 			}
 			if (!res.ok) {
 				throw new ApiError(`HTTP ${res.status} ${method} ${url.pathname}`, {
@@ -105,10 +116,12 @@ export class WeixinApi {
 			}
 			return data ?? {};
 		} catch (err) {
-			if (err?.name === "AbortError") throw new ApiError(`请求超时：${path}`, { status: 0 });
+			if (err?.name === "AbortError") {
+				throw new ApiError(signal?.aborted ? `请求已取消：${path}` : `请求超时：${path}`, { status: 0 });
+			}
 			throw err;
 		} finally {
-			if (timer) clearTimeout(timer);
+			clearTimeout(timer);
 		}
 	}
 
@@ -130,13 +143,19 @@ export class WeixinApi {
 	// ── 消息 ──────────────────────────────────────────────────────────
 
 	async getUpdates(token, cursor, { signal, timeoutMs = 45_000 } = {}) {
-		return this.#request(this.baseUrl, "/ilink/bot/getupdates", {
+		const data = await this.#request(this.baseUrl, "/ilink/bot/getupdates", {
 			method: "POST",
 			token,
 			body: { get_updates_buf: String(cursor ?? ""), base_info: this.baseInfo() },
 			signal,
 			timeoutMs,
 		});
+		// 空对象意味着响应体是空的（#request 对空体返回 {}）。长轮询不能把这种
+		// 响应当成功，否则会 200ms 一次热循环。
+		if (!data || typeof data !== "object" || Object.keys(data).length === 0) {
+			throw new ApiError("getupdates 返回空响应", { status: 200 });
+		}
+		return data;
 	}
 
 	async sendText(token, { to, contextToken, text, clientId, runId }) {

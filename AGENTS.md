@@ -17,7 +17,7 @@ tmp/          临时产物（二维码、测试日志）
 ## 常用命令
 
 ```bash
-node --test test/*.test.mjs        # 全部单测（34 项）
+node --test test/*.test.mjs        # 全部单测（45 项）
 node scripts/login.mjs [--force]   # 扫码登录，凭证写 ~/.pi/agent/.pi-weixin/credentials.json
 node --check src/index.js          # 语法检查
 ```

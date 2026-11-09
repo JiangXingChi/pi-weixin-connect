@@ -6,7 +6,11 @@ const MAX_CONTENT_CHARS = 4000;
 const INDICATOR_RESERVE = 10;
 
 function safeName(name, fallback = "file.bin") {
-	const text = String(name ?? "").replace(/[\r\n\t]+/g, " ").trim();
+	// 去掉所有 C0/C1 控制字符（含 ESC），并压平空白；文件名会进 prompt
+	const text = String(name ?? "")
+		.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
 	return text ? text.slice(0, 120) : fallback;
 }
 
@@ -57,7 +61,7 @@ export function normalizeMessage(raw) {
 	if (raw.group_id) return null; // 官方只支持单聊，群里的事件一律忽略
 
 	return {
-		messageId: String(raw.message_id ?? ""),
+		messageId: raw.message_id ? String(raw.message_id) : "",
 		seq: Number(raw.seq) || 0,
 		from: String(raw.from_user_id ?? ""),
 		to: String(raw.to_user_id ?? ""),
@@ -87,7 +91,12 @@ export function buildPrompt(item, cfg, extraNotes = []) {
 	lines.push(`[微信单聊 · 用户 ${maskId(item.from)}]`);
 	const body = [item.text, ...extraNotes].filter(Boolean).join("\n");
 	if (body) lines.push(body);
-	if (cfg.files?.enabled) lines.push("（需要把本地文件发给对方时，在回复末尾单独写一行 [[file:/绝对路径]]，最多 3 个。）");
+	if (cfg.files?.enabled) {
+		const maxCount = Math.max(1, Number(cfg.files.maxCount) || 3);
+		lines.push(
+			`（需要把本地文件发给对方时，在回复末尾单独写一行 [[file:/绝对路径]]，最多 ${maxCount} 个。）`,
+		);
+	}
 	return { text: lines.join("\n") };
 }
 
@@ -99,13 +108,26 @@ function fenceState(text) {
 		if (!match) continue;
 		if (!open) {
 			open = true;
-			lang = match[1] || "";
+			// 限制语言标签长度：超长标签会让每段的前缀挤掉正文，极端情况下切出空片
+			lang = (match[1] || "").slice(0, 20);
 		} else {
 			open = false;
 			lang = "";
 		}
 	}
 	return { open, lang };
+}
+
+const isHighSurrogate = (code) => code >= 0xd800 && code <= 0xdbff;
+const isLowSurrogate = (code) => code >= 0xdc00 && code <= 0xdfff;
+
+/** 不把 UTF-16 代理对切成两半。 */
+function safeCut(text, index) {
+	let cut = Math.max(0, Math.min(index, text.length));
+	if (cut > 0 && cut < text.length && isHighSurrogate(text.charCodeAt(cut - 1)) && isLowSurrogate(text.charCodeAt(cut))) {
+		cut -= 1;
+	}
+	return cut;
 }
 
 function splitFenced(text, limit) {
@@ -125,6 +147,8 @@ function splitFenced(text, limit) {
 		let cut = rest.lastIndexOf("\n", headroom);
 		if (cut < Math.floor(headroom * 0.5)) cut = rest.lastIndexOf(" ", headroom);
 		if (cut <= 0) cut = headroom;
+		cut = safeCut(rest, cut);
+		if (cut <= 0) cut = safeCut(rest, headroom);
 		let chunk = prefix + rest.slice(0, cut);
 		const state = fenceState(chunk);
 		if (state.open) {
@@ -142,7 +166,7 @@ function splitFenced(text, limit) {
 /** 分片 + (i/n)；超过 maxChunks 只发前几段并带提示。 */
 export function chunkText(
 	text,
-	{ chunkChars = MAX_CONTENT_CHARS, maxChunks = 9, overflowHint = "……（内容过长，完整结果见 Pi 终端）" } = {},
+	{ chunkChars = MAX_CONTENT_CHARS, maxChunks = 9, overflowHint = "……（内容过长，已截断）" } = {},
 ) {
 	const normalized = String(text ?? "").trim();
 	if (!normalized) return [];
@@ -159,7 +183,7 @@ export function chunkText(
 	const last = kept[maxChunks - 1] ?? "";
 	const hint = `\n${overflowHint}`;
 	const room = Math.max(0, limit - hint.length);
-	kept[maxChunks - 1] = (last.length > room ? last.slice(0, room) : last) + hint;
+	kept[maxChunks - 1] = (last.length > room ? last.slice(0, safeCut(last, room)) : last) + hint;
 	return kept;
 }
 

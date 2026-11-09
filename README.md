@@ -5,7 +5,8 @@
 微信里发的消息进入当前 Pi 会话，Pi 干完活后把最终回答发回微信；用法和
 [`pi-qq-connect`](https://github.com/JiangXingChi/pi-qq-connect) 对齐，只是聊天软件换成微信。
 
-> 状态：P0（文本通道）与 P2（媒体）已完成，**P1（桌面命令 / 常驻服务 / systemd）尚未实现**。
+> 状态：P0（文本通道）、P2（媒体）与独立后台服务（P1 的常驻部分）已完成，
+> **桌面命令映射（`/new`、`/model` 等）尚未接入**。
 > 文本收发已在真机微信验证；图片/文件目前只有单元与 mock 验证，尚未做真机回归。
 
 ## 能力
@@ -32,7 +33,7 @@
 尚未发布 npm，先从本地目录安装：
 
 ```bash
-pi install /home/teacat/Agent/Temp/pi-weixin-connect
+pi install /path/to/pi-weixin-connect
 ```
 
 或在 Pi 里 `--extension /绝对路径/index.js` 临时加载。
@@ -110,7 +111,8 @@ scripts/uninstall-service.sh        # 卸载（不删凭证）
   自己不当长轮询；想退回“挂在当前进程”的老行为，才改成 `"inline"`。
 - `allowUsers` 为空 = 只允许扫码登录者本人；填入则按白名单。
 - 出站文件默认只允许 `家目录 / 当前工作目录 / /tmp`，并始终拒绝 `~/.ssh`、`~/.config`、
-  `~/.pi/agent`、`/etc` 等敏感路径；需要放宽时填 `files.allowDirs`。
+  `~/.pi/agent`、`/etc` 等敏感路径。填写 `files.allowDirs` 后**只允许这些目录**（替换默认白名单）；
+  敏感路径仍然拒绝。
 
 ## 微信侧限制（协议约束，无法绕过）
 
@@ -123,7 +125,7 @@ scripts/uninstall-service.sh        # 卸载（不删凭证）
 ## 开发
 
 ```bash
-node --test test/*.test.mjs   # 30 项：文本/队列/扫码/媒体/网关/回归
+node --test test/*.test.mjs   # 45 项：文本/队列/扫码/媒体/网关/回归
 node --check src/index.js
 ```
 

@@ -20,8 +20,20 @@ export const OUT_VIDEO_MAX = 30 * 1024 * 1024;
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic"]);
 const VIDEO_EXT = new Set(["mp4", "mov", "m4v", "webm", "avi", "mkv"]);
 
-const DENY_PREFIXES = ["/etc", "/proc", "/sys", "/dev", "/boot", "/root"];
-const DENY_HOME = [".ssh", ".gnupg", ".pi/agent", ".config", ".local/share/keyrings"];
+const DENY_PREFIXES = ["/etc", "/proc", "/sys", "/dev", "/boot"];
+const DENY_HOME = [
+	".ssh",
+	".gnupg",
+	".pi/agent",
+	".config",
+	".local/share/keyrings",
+	".git-credentials",
+	".netrc",
+	".npmrc",
+	".aws",
+	".docker",
+	".kube",
+];
 
 export function aesEcbPaddedSize(size) {
 	return Math.ceil((size + 1) / 16) * 16;
@@ -94,7 +106,7 @@ function isDenied(filePath, allowDirs) {
 	// 先解掉符号链接，再判断前缀；否则允许目录里的软链可以指向 ~/.ssh
 	const resolved = realPath(filePath);
 	if (DENY_PREFIXES.some((prefix) => resolved === prefix || resolved.startsWith(prefix + "/"))) return true;
-	const home = path.resolve(process.env.HOME || "/home/teacat");
+	const home = path.resolve(os.homedir());
 	for (const rel of DENY_HOME) {
 		const root = path.join(home, rel);
 		if (resolved === root || resolved.startsWith(root + path.sep)) return true;
@@ -131,12 +143,17 @@ export function inspectFile(filePath, { maxBytes = CDN_MAX_BYTES, allowDirs = []
  * 解析回复里的 [[file:/abs/path]] 标记。
  * 返回 {text, files:[{path, marker}], skipped:[{path, reason}]}。
  */
-export function parseFileMarkers(text, { maxCount = 3, maxBytes = CDN_MAX_BYTES, allowDirs = [] } = {}) {
+export function parseFileMarkers(text, { maxCount = 3, maxBytes = CDN_MAX_BYTES, allowDirs = [], disabled = false } = {}) {
 	const input = String(text ?? "");
 	const files = [];
 	const skipped = [];
+	let disabledCount = 0;
 	const kept = input.replace(/\[\[file:([^\]]+)\]\]/gi, (marker, rawPath) => {
 		const filePath = rawPath.trim();
+		if (disabled) {
+			disabledCount++;
+			return "";
+		}
 		if (files.length + skipped.length >= maxCount + 5) {
 			skipped.push({ path: filePath, reason: "标记太多" });
 			return "";
@@ -153,6 +170,9 @@ export function parseFileMarkers(text, { maxCount = 3, maxBytes = CDN_MAX_BYTES,
 		files.push({ path: check.path, name: check.name, kind: check.kind, mediaType: check.mediaType, size: check.size });
 		return "";
 	});
+	if (disabled && disabledCount > 0) {
+		skipped.push({ path: "", reason: "文件发送已关闭", count: disabledCount });
+	}
 	return { text: kept.trim(), files, skipped };
 }
 

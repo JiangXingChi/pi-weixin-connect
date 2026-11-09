@@ -17,6 +17,15 @@ import { credentialsPath } from "./config.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
+
+/** 只接受 http(s) 绝对地址；凭证文件被改写时不把 token 发到奇怪的地方。 */
+export function safeBaseUrl(value) {
+	const raw = String(value ?? "").trim().replace(/\/+$/, "");
+	if (!/^https?:\/\/[^\s/?#]+/i.test(raw)) return "";
+	return raw;
+}
+
 export function loadCredentials() {
 	try {
 		const data = JSON.parse(fs.readFileSync(credentialsPath(), "utf8"));
@@ -25,7 +34,7 @@ export function loadCredentials() {
 			token: data.token,
 			botId: data.botId ?? data.ilink_bot_id ?? "",
 			userId: data.userId ?? data.ilink_user_id ?? "",
-			baseUrl: data.baseUrl ?? data.baseurl ?? "https://ilinkai.weixin.qq.com",
+			baseUrl: safeBaseUrl(data.baseUrl ?? data.baseurl) || DEFAULT_BASE_URL,
 			savedAt: data.savedAt ?? "",
 		};
 	} catch {
@@ -41,7 +50,7 @@ export function saveCredentials(credentials) {
 			token: credentials.token,
 			botId: credentials.botId ?? "",
 			userId: credentials.userId ?? "",
-			baseUrl: credentials.baseUrl ?? "https://ilinkai.weixin.qq.com",
+			baseUrl: safeBaseUrl(credentials.baseUrl) || DEFAULT_BASE_URL,
 			savedAt: new Date().toISOString(),
 		},
 		null,
@@ -154,7 +163,9 @@ export async function login({
 } = {}) {
 	const existing = loadCredentials();
 	const localTokens = existing?.token ? [existing.token] : [];
-	let baseUrl = existing?.baseUrl || api.baseUrl;
+	// 二维码登录固定从官方基座开始；凭证里的 baseUrl 是登录后 Bot 请求的入口，
+	// 不能拿来轮询新的二维码（旧的 IDC 主机可能已不可用）。
+	let baseUrl = api.baseUrl;
 	let lastPng = null;
 
 	try {
@@ -233,9 +244,12 @@ export async function login({
 						token: status.bot_token,
 						botId: status.ilink_bot_id ?? "",
 						userId: status.ilink_user_id ?? "",
-						baseUrl: status.baseurl || api.baseUrl,
+						baseUrl: safeBaseUrl(status.baseurl) || api.baseUrl,
 					};
 					saveCredentials(credentials);
+					if (!credentials.userId) {
+						log?.warn("登录成功但服务端没有返回 ilink_user_id：默认白名单将拒绝所有消息");
+					}
 					log?.info(`登录成功：bot=${credentials.botId || "?"} user=${credentials.userId ? `${credentials.userId.slice(0, 6)}…` : "?"}`);
 					onStatus("登录成功");
 					return loadCredentials() ?? credentials;

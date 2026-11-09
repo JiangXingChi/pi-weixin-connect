@@ -5,7 +5,6 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 UNIT_DIR="$HOME/.config/systemd/user"
 UNIT="$UNIT_DIR/pi-weixin-connect.service"
-NODE=$(command -v node || echo /usr/bin/node)
 
 mkdir -p "$UNIT_DIR"
 cat > "$UNIT" <<EOF

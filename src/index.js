@@ -32,7 +32,6 @@ import {
 	removeServiceState,
 	serviceStatePath,
 	startManagedService,
-	startService,
 	stopService,
 } from "./service.js";
 import { maskId } from "./text.js";
@@ -51,6 +50,11 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function baseDir() {
 	return path.dirname(configPath());
+}
+
+function liveService() {
+	const state = readServiceState(serviceStatePath(baseDir()));
+	return state && isServiceAlive(state) ? state : null;
 }
 
 function lockFilePath() {
@@ -145,7 +149,7 @@ export default function createExtension(pi) {
 		if (release && state.config?.lock !== false) releaseLock(lockFilePath());
 	}
 
-	async function start(ctx) {
+	async function start(ctx, { quietService = false } = {}) {
 		if (state.starting) return;
 		state.starting = true;
 		state.ctx = ctx ?? state.ctx;
@@ -167,11 +171,14 @@ export default function createExtension(pi) {
 				state.error = error;
 				setStatus(STATE_LABEL.error, error);
 				notify(`pi-weixin-connect: ${error}`, "warning");
+				// 之前可能是 inline 轮询进程：不再连长轮询时必须把锁还回去
+				stop({ release: true });
 				return;
 			}
 			if (!config.enabled) {
 				setStatus(STATE_LABEL.disabled);
 				state.logger.info("配置 enabled=false，未连接");
+				stop({ release: true });
 				return;
 			}
 
@@ -180,6 +187,7 @@ export default function createExtension(pi) {
 			if (!credentials) {
 				setStatus(STATE_LABEL.unconfigured);
 				notify("pi-weixin-connect: 还没有登录。在终端运行 /wx login 扫码。", "info");
+				stop({ release: true });
 				return;
 			}
 
@@ -187,12 +195,23 @@ export default function createExtension(pi) {
 			// 当前进程若是服务本身（或显式 inline）才在这里连长轮询。
 			const svc = readServiceState(serviceStatePath(baseDir()));
 			const svcAlive = Boolean(svc && isServiceAlive(svc));
-			const selfService = isServiceProcess(svc);
+			const svcProcessAlive = Boolean(svc && isProcessAlive(svc.pid));
+			const selfService = isServiceProcess();
 			if (!selfService && config.service.mode !== "inline") {
 				if (svcAlive) {
 					stop({ release: true });
 					setStatus("服务在线", `pid ${svc.pid}`);
-					notify(`微信后台服务在线（pid ${svc.pid}），本进程不连长轮询；用 /wx status 查看`, "info");
+					if (!quietService) {
+						notify(`微信后台服务在线（pid ${svc.pid}），本进程不连长轮询；用 /wx status 查看`, "info");
+					}
+					return;
+				}
+				if (svcProcessAlive) {
+					// 进程还在但心跳停了：再拉一个只会抢锁/双开，交给用户明确处理
+					state.error = `后台服务进程（pid ${svc.pid}）还在，但心跳已停；用 /wx stop --force 后重试`;
+					setStatus(STATE_LABEL.error, state.error);
+					if (!quietService) notify(`pi-weixin-connect: ${state.error}`, "warning");
+					stop({ release: true });
 					return;
 				}
 				if (svc) removeServiceState(serviceStatePath(baseDir()), svc.pid);
@@ -215,7 +234,8 @@ export default function createExtension(pi) {
 			}
 
 			const api = new WeixinApi({
-				baseUrl: config.endpoints.base,
+				// 登录返回的 baseurl 是后续 Bot 请求的正式入口；IDC 重定向后不能继续打默认域名
+				baseUrl: process.env.PIWXCONNECT_BASE ? config.endpoints.base : credentials.baseUrl || config.endpoints.base,
 				cdnBaseUrl: config.endpoints.cdn,
 				version: VERSION,
 				log: state.logger,
@@ -292,6 +312,8 @@ export default function createExtension(pi) {
 			state.logger?.error(`启动失败：${err?.stack ?? err}`);
 			setStatus(STATE_LABEL.error, state.error);
 			notify(`pi-weixin-connect 启动失败：${state.error}`, "warning");
+			// 启动到一半抛异常时不要留着锁
+			stop({ release: true });
 		} finally {
 			state.starting = false;
 		}
@@ -299,15 +321,18 @@ export default function createExtension(pi) {
 
 	function statusReport() {
 		const cfg = state.config;
+		const cred = loadCredentials() ?? state.credentials;
 		const lines = [];
 		lines.push(`配置：${configPath()}${cfg ? "" : "（未加载）"}`);
-		lines.push(`凭证：${credentialsPath()}${state.credentials ? "（已登录）" : "（未登录）"}`);
+		lines.push(`凭证：${credentialsPath()}${cred ? "（已登录）" : "（未登录）"}`);
 		if (state.error) lines.push(`错误：${state.error}`);
 		if (!cfg) return lines.join("\n");
-		const cred = state.credentials;
 		if (cred) lines.push(`Bot：${maskId(cred.botId)} · 用户 ${maskId(cred.userId)}`);
 		const gw = state.gateway;
-		lines.push(`长轮询：${gw ? STATE_LABEL[gw.state] ?? gw.state : "未启动"}`);
+		const svcForPoll = liveService();
+		lines.push(
+			`长轮询：${gw ? STATE_LABEL[gw.state] ?? gw.state : svcForPoll ? `由后台服务承载（pid ${svcForPoll.pid}）` : "未启动"}`,
+		);
 		lines.push(`权限：用户白名单 ${cfg.allowUsers.length} 个${cfg.allowUsers.length === 0 ? "（仅登录者本人）" : ""}`);
 		const lock = readLock(lockFilePath());
 		lines.push(`锁：${lock ? `pid ${lock.pid}（${lock.at}）` : "无"}`);
@@ -343,6 +368,7 @@ export default function createExtension(pi) {
 		let loggedIn = false;
 		try {
 			const { config } = loadConfig();
+			state.config = config;
 			const logger = state.logger ?? new Logger(config.log);
 			state.logger = logger;
 			const api = new WeixinApi({
@@ -361,7 +387,7 @@ export default function createExtension(pi) {
 					qrShown = true;
 					const where = qr.pngPath ? `二维码已保存：${qr.pngPath}` : `二维码内容：${qr.content}`;
 					notify(`${where}\n用微信扫码并确认。`, "info");
-					if (qr.ansi) logger.info(`二维码（终端）：\n${qr.ansi}`);
+					if (qr.ansi) logger.debug(`已生成终端二维码（${qr.ansi.split("\n").length} 行），不写入日志`);
 				},
 				onStatus: (text) => logger.info(text),
 				onNeedVerifyCode: async () => {
@@ -386,34 +412,49 @@ export default function createExtension(pi) {
 				},
 			});
 			loggedIn = true;
+			state.error = null;
 			notify(`微信登录成功：用户 ${maskId(credentials.userId)}`, "info");
 			state.credentials = credentials;
 			const svc = readServiceState(serviceStatePath(baseDir()));
 			if (config.service.mode !== "inline") {
 				// 默认 standalone：登录完成后由独立服务接管；有旧服务就先停掉
-				if (svc && isServiceAlive(svc)) {
-					await stopService(svc, { force: true });
-					removeServiceState(serviceStatePath(baseDir()), svc.pid);
+				// （心跳过期但进程还活着也要停，否则旧进程会拿着旧 token 继续轮询）
+				let oldServiceStopped = true;
+				if (svc && isProcessAlive(svc.pid)) {
+					const stopped = await stopService(svc, { force: true });
+					if (stopped.stopped) {
+						removeServiceState(serviceStatePath(baseDir()), svc.pid);
+					} else {
+						oldServiceStopped = false;
+						notify(`旧后台服务未能停止（${stopped.reason}），本次登录不会重启服务`, "warning");
+					}
 				}
+				// 无论旧服务是否停掉，控制面自己都不能再拿旧凭证轮询
 				stop({ release: true });
-				const started = await startManagedService({
-					binPath: SERVICE_BIN,
-					baseDir: baseDir(),
-					cwd: state.ctx?.cwd ?? os.homedir(),
-					sessionId: config.service.sessionId,
-				});
-				notify(
-					started.pid
-						? `凭证已更新，微信独立服务已启动（pid ${started.pid}）`
-						: `凭证已更新，但服务启动失败：${started.error ?? "未知原因"}`,
-					started.pid ? "info" : "warning",
-				);
+				if (oldServiceStopped) {
+					const started = await startManagedService({
+						binPath: SERVICE_BIN,
+						baseDir: baseDir(),
+						cwd: state.ctx?.cwd ?? os.homedir(),
+						sessionId: config.service.sessionId,
+					});
+					notify(
+						started.pid
+							? `凭证已更新，微信独立服务已启动（pid ${started.pid}）`
+							: `凭证已更新，但服务启动失败：${started.error ?? "未知原因"}`,
+						started.pid ? "info" : "warning",
+					);
+				}
 			} else {
 				stop({ release: true });
 				await start(ctx);
 			}
 			dropCredentialsBackup(backup);
-			if (qrShown && !state.gateway) notify("登录成功，但网关没有启动，查看 /wx status 或日志", "warning");
+			if (!credentials.userId) {
+				notify("登录成功，但服务端没有返回用户 ID：默认白名单会拒绝所有消息。请重试 /wx login。", "warning");
+			}
+			if (config.service.mode === "inline" && qrShown && !state.gateway)
+				notify("登录成功，但网关没有启动，查看 /wx status 或日志", "warning");
 		} catch (err) {
 			// 只有扫码本身失败才回滚旧凭证；登录已成功、只是网关没起来时保留新凭证
 			if (!loggedIn) restoreCredentials(backup);
@@ -441,7 +482,15 @@ export default function createExtension(pi) {
 			notify(`后台服务已在运行：${describeService(svc)}`, "info");
 			return;
 		}
-		if (svc && !isProcessAlive(svc.pid)) removeServiceState(file, svc.pid);
+		if (svc && isProcessAlive(svc.pid)) {
+			// 进程活着、心跳过期：不要双开，让用户先显式停掉
+			notify(`后台服务进程还在（pid ${svc.pid}），但心跳已停；先 /wx stop --force 再启动`, "warning");
+			return;
+		}
+		if (svc) removeServiceState(file, svc.pid);
+		// 控制面可能在启动后才用 scripts/login.mjs 扫码，这里重新读一次，别用启动时缓存的空值
+		const credentials = loadCredentials();
+		if (credentials) state.credentials = credentials;
 		if (!state.credentials) {
 			notify("还没有登录，先 /wx login 扫码", "warning");
 			return;
@@ -529,10 +578,16 @@ export default function createExtension(pi) {
 						return;
 					case "logout": {
 						const svc = readServiceState(serviceStatePath(baseDir()));
-						if (svc && isServiceAlive(svc)) {
-							await stopService(svc, { force: true });
-							removeServiceState(serviceStatePath(baseDir()), svc.pid);
+						// 心跳过期但进程还活着也要停，否则旧进程会拿着已删除的 token 继续轮询
+						if (svc && isProcessAlive(svc.pid)) {
+							const stopped = await stopService(svc, { force: true });
+							if (!stopped.stopped) {
+								notify(`无法停止后台服务（${stopped.reason}），登出已取消；先 /wx stop --force`, "warning");
+								return;
+							}
 						}
+						// 服务已退出、但状态文件还在时也要清掉，否则 /wx status 一直显示“进程已退出”
+						if (svc) removeServiceState(serviceStatePath(baseDir()), svc.pid);
 						stop({ release: true });
 						clearCredentials();
 						state.credentials = undefined;
@@ -566,6 +621,14 @@ export default function createExtension(pi) {
 		registerCommands();
 
 		if (!state.bridge && !state.gateway) {
+			const svc = liveService();
+			if (svc && (state.config?.service?.mode ?? "standalone") !== "inline") {
+				// 独立服务在跑：控制面每次 /new 都不该再拉起一遍，也不该报“正在重建”；
+				// 但仍然要跑 start() 把配置/凭证读进来，后台服务状态才算完整。
+				setStatus("服务在线", `pid ${svc.pid}`);
+				void start(ctx, { quietService: true });
+				return;
+			}
 			if (reason !== "startup") notify(`会话已切换（${reason}），没有活动桥，正在重建微信连接…`, "warning");
 			void start(ctx);
 			return;
@@ -601,12 +664,12 @@ export default function createExtension(pi) {
 
 	pi.on("message_end", (event) => {
 		if (state.owner !== pi) return;
-		state.bridge?.onMessageEnd(event.message);
+		state.bridge?.onMessageEnd(event?.message);
 	});
 
 	pi.on("agent_settled", (event) => {
 		if (state.owner !== pi) return;
-		state.bridge?.onAgentSettled(Boolean(event.aborted));
+		state.bridge?.onAgentSettled(Boolean(event?.aborted));
 	});
 
 	return state;

@@ -7,6 +7,7 @@
  */
 
 import readline from "node:readline/promises";
+import fs from "node:fs";
 import { stdin as input, stdout as output } from "node:process";
 
 import {
@@ -23,6 +24,13 @@ import { Logger } from "../src/log.js";
 const force = process.argv.includes("--force");
 const { config } = loadConfig();
 const logger = new Logger({ ...config.log, level: process.env.PIWXCONNECT_LOG_LEVEL || "info" });
+const VERSION = (() => {
+	try {
+		return JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version ?? "0.0.0";
+	} catch {
+		return "0.0.0";
+	}
+})();
 
 let backup = null;
 if (force) {
@@ -30,12 +38,13 @@ if (force) {
 	console.log(backup ? "已备份旧凭证" : "没有旧凭证");
 } else if (loadCredentials()) {
 	console.log("已有凭证；要重新扫码请加 --force");
+	process.exit(0);
 }
 
 const api = new WeixinApi({
 	baseUrl: config.endpoints.base,
 	cdnBaseUrl: config.endpoints.cdn,
-	version: "0.1.0",
+	version: VERSION,
 	log: logger,
 });
 
