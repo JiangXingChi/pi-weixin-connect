@@ -1,6 +1,6 @@
 {
 	"name": "pi-weixin-connect",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "微信 ClawBot（iLink）⇄ 当前 Pi 会话：私聊、文本收发、后台常驻",
 	"type": "module",
 	"license": "MIT",
@@ -28,7 +28,6 @@
 		"bin",
 		"scripts",
 		"packaging",
-		"examples",
 		"README.md"
 	],
 	"scripts": {

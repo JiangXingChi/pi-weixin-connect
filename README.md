@@ -30,7 +30,13 @@
 
 ## 安装
 
-尚未发布 npm，先从本地目录安装：
+已发布 npm（[`pi-weixin-connect`](https://www.npmjs.com/package/pi-weixin-connect)）：
+
+```bash
+pi install pi-weixin-connect
+```
+
+本地开发目录：
 
 ```bash
 pi install /path/to/pi-weixin-connect
