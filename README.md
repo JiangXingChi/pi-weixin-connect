@@ -1,12 +1,15 @@
 # pi-weixin-connect
 
+> **平台要求：Linux**。后台服务通过 systemd 用户单元（`systemctl --user`）管理，
+> 仅在 Linux 上验证；macOS / Windows 未支持。
+
 把**微信 ClawBot**（腾讯 iLink Bot 协议）接到**当前 Pi 会话**的桥接插件。
 
 微信里发的消息进入当前 Pi 会话，Pi 干完活后把最终回答发回微信；用法和
 [`pi-qq-connect`](https://github.com/JiangXingChi/pi-qq-connect) 对齐，只是聊天软件换成微信。
 
-> 状态：P0（文本通道）、P2（媒体）与独立后台服务（P1 的常驻部分）已完成，
-> **桌面命令映射（`/new`、`/model` 等）尚未接入**。
+> 状态：文本通道、媒体与独立后台服务已完成。聊天窗口里只映射 `/new`（技能与提示模板
+> 仍可正常使用）；`/model` 等控制命令请在终端执行。
 > 文本收发已在真机微信验证；图片/文件目前只有单元与 mock 验证，尚未做真机回归。
 
 ## 能力
@@ -72,6 +75,7 @@ node scripts/login.mjs --force  # 强制重扫，失败会回滚旧凭证
 | `/wx stop [--force]` | 停止独立后台服务 |
 | `/wx logout` | 删除凭证并断开 |
 | `/wx log [n]` | 最近 n 条日志 |
+| `/wx help` | 命令表 |
 
 ## 独立后台服务（推荐）
 
@@ -90,7 +94,7 @@ scripts/uninstall-service.sh        # 卸载（不删凭证）
 状态看 `/wx status` 的“后台服务”一行。服务日志：journal 或
 `~/.pi/agent/pi-weixin-connect.service.log`。
 
-微信里直接发 `/new`、`/model` 等桌面命令属于 P1，尚未接入。
+微信里可以直接发 `/new` 开新会话（聊天窗口只映射这一条）；`/model` 等控制命令请在终端执行。
 
 ## 配置
 

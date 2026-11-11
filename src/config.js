@@ -36,7 +36,7 @@ export const DEFAULT_CONFIG = Object.freeze({
 	sessionWindowHours: 24, // context_token 有效期
 	typing: true,
 	maxQueue: 20,
-	emptyReply: "（Pi 这轮没有返回文字）",
+	emptyReply: "(pi returned no text this round)",
 	dedupeTtlMs: 10 * 60 * 1000,
 	lock: true,
 	// standalone：微信跑独立后台进程/会话（默认，避免陷进“共享会话”的坑）
@@ -77,11 +77,11 @@ export function loadConfig() {
 		try {
 			raw = JSON.parse(fs.readFileSync(file, "utf8"));
 			if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-				error = "配置不是 JSON 对象";
+				error = "config is not a JSON object";
 				raw = {};
 			}
 		} catch (err) {
-			error = `配置解析失败：${err?.message ?? err}`;
+			error = `could not parse config: ${err?.message ?? err}`;
 			raw = {};
 		}
 	}

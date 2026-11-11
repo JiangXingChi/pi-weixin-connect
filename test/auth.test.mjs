@@ -52,7 +52,7 @@ test("login：verify_code_blocked 直接失败", async () => {
 		const api = new WeixinApi({ baseUrl: mock.baseUrl });
 		await assert.rejects(
 			login({ api, onNeedVerifyCode: async () => "0000" }),
-			/配对码错误次数过多/,
+			/too many wrong pairing codes/,
 		);
 	} finally {
 		await mock.close();

@@ -53,13 +53,13 @@ test("文件标记：最多 3 个、敏感路径拒绝、大小上限", () => {
 
 		const denied = parseFileMarkers(`[[file:${os.homedir()}/.ssh/id_rsa]]`, { maxCount: 3 });
 		assert.equal(denied.files.length, 0);
-		assert.match(denied.skipped[0].reason, /敏感路径/);
+		assert.match(denied.skipped[0].reason, /path is not allowed/);
 
 		const tooBig = path.join(dir, "big.bin");
 		fs.writeFileSync(tooBig, Buffer.alloc(2048));
 		const over = parseFileMarkers(`[[file:${tooBig}]]`, { maxCount: 3, maxBytes: 1024 });
 		assert.equal(over.files.length, 0);
-		assert.match(over.skipped[0].reason, /超过上限/);
+		assert.match(over.skipped[0].reason, /exceeds the \d+MB limit/);
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
@@ -118,7 +118,7 @@ test("inspectFile：镜像/视频/普通文件与上限", () => {
 		const txt = path.join(dir, "a.txt");
 		fs.writeFileSync(txt, Buffer.alloc(64));
 		assert.equal(inspectFile(txt).kind, "file");
-		assert.equal(inspectFile(path.join(dir, "missing")).reason, "文件不存在");
+		assert.equal(inspectFile(path.join(dir, "missing")).reason, "file not found");
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}

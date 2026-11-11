@@ -170,10 +170,10 @@ export async function login({
 
 	try {
 	for (let refresh = 0; refresh <= maxRefreshes; refresh++) {
-		if (signal?.aborted) throw new Error("登录已取消");
+		if (signal?.aborted) throw new Error("login cancelled");
 		// 取二维码固定打官方基座；redirect 只用于状态轮询
 		const qr = await api.getQrCode(localTokens, api.baseUrl);
-		if (!qr?.qrcode || !qr?.qrcode_img_content) throw new Error("服务端没有返回二维码");
+		if (!qr?.qrcode || !qr?.qrcode_img_content) throw new Error("server did not return a QR code");
 
 		const rendered = renderQr(qr.qrcode_img_content);
 		if (lastPng && lastPng !== rendered.pngPath) {
@@ -192,14 +192,14 @@ export async function login({
 		let expired = false;
 		let pollErrors = 0;
 		while (!expired) {
-			if (signal?.aborted) throw new Error("登录已取消");
+			if (signal?.aborted) throw new Error("login cancelled");
 			let status;
 			try {
 				status = await api.getQrStatus(qr.qrcode, verifyCode, baseUrl);
 			} catch (err) {
 				pollErrors++;
 				log?.warn(`轮询二维码状态失败 ${pollErrors}/5：${err?.message ?? err}`);
-				if (pollErrors >= 5) throw new Error("连续 5 次无法查询二维码状态，检查网络后重试");
+				if (pollErrors >= 5) throw new Error("could not fetch the QR status 5 times in a row; check the network and retry");
 				await sleep(1500);
 				continue;
 			}
@@ -219,14 +219,14 @@ export async function login({
 					break;
 				case "need_verifycode": {
 					onStatus("需要输入手机上的配对码");
-					if (!onNeedVerifyCode) throw new Error("需要配对码，但当前环境无法输入");
+					if (!onNeedVerifyCode) throw new Error("a pairing code is required but this environment cannot prompt for it");
 					const code = await onNeedVerifyCode();
-					if (!code) throw new Error("没有输入配对码，登录取消");
+					if (!code) throw new Error("no pairing code entered; login cancelled");
 					verifyCode = String(code).trim();
 					break;
 				}
 				case "verify_code_blocked":
-					throw new Error("配对码错误次数过多，二维码已作废");
+					throw new Error("too many wrong pairing codes; the QR code expired");
 				case "expired":
 					expired = true;
 					log?.info("二维码已过期，重新获取");
@@ -236,10 +236,10 @@ export async function login({
 						log?.info("扫码的 Bot 已绑定本机，复用现有凭证");
 						return existing;
 					}
-					throw new Error("扫码的 Bot 已绑定其他客户端，但本机没有可用凭证");
+					throw new Error("this bot is bound to another client and no local credentials are available");
 				}
 				case "confirmed": {
-					if (!status.bot_token) throw new Error("登录成功但没有返回 bot_token");
+					if (!status.bot_token) throw new Error("login succeeded but no bot_token was returned");
 					const credentials = {
 						token: status.bot_token,
 						botId: status.ilink_bot_id ?? "",
@@ -269,5 +269,5 @@ export async function login({
 			}
 		}
 	}
-	throw new Error("二维码多次过期，登录未完成");
+	throw new Error("the QR code expired repeatedly; login did not finish");
 }

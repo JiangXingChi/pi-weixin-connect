@@ -41,7 +41,7 @@ export function acquireLock(file, { force = false, pid = process.pid } = {}) {
 			fs.linkSync(tmp, file);
 			return { ok: true, takenOver: false };
 		} catch (err) {
-			if (err?.code !== "EEXIST") return { ok: false, error: "无法写入锁文件" };
+			if (err?.code !== "EEXIST") return { ok: false, error: "could not write the lock file" };
 			const current = readLock(file);
 			if (current && current.pid !== pid && isProcessAlive(current.pid) && !force) {
 				return { ok: false, holder: current };
@@ -50,7 +50,7 @@ export function acquireLock(file, { force = false, pid = process.pid } = {}) {
 			return { ok: true, takenOver: Boolean(holder && holder.pid !== pid && force) };
 		}
 	} catch (err) {
-		return { ok: false, error: err?.message ?? "无法写入锁文件" };
+		return { ok: false, error: err?.message ?? "could not write the lock file" };
 	} finally {
 		try {
 			fs.unlinkSync(tmp);

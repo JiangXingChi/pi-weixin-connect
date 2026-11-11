@@ -27,11 +27,11 @@ test("service state：写入/读取/心跳判定/清理", () => {
 		const state = readServiceState(file);
 		assert.equal(state.pid, process.pid);
 		assert.equal(isServiceAlive(state), true);
-		assert.match(describeService(state), /在线/);
+		assert.match(describeService(state), /online/);
 
 		// 心跳过期
 		assert.equal(isServiceAlive(state, { now: now + 50_000 }), false);
-		assert.match(describeService(state, { now: now + 50_000 }), /心跳停了/);
+		assert.match(describeService(state, { now: now + 50_000 }), /heartbeat stopped/);
 
 		// 别的 pid 不能删
 		removeServiceState(file, process.pid + 1);
@@ -54,7 +54,7 @@ test("service state：损坏文件按未运行处理", () => {
 		fs.writeFileSync(file, "{not json");
 		assert.equal(readServiceState(file), null);
 		assert.equal(isServiceAlive(null), false);
-		assert.equal(describeService(null), "未运行");
+		assert.equal(describeService(null), "not running");
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}

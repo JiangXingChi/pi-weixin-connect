@@ -88,13 +88,13 @@ test("inspectFile：allowDirs 不能绕过敏感目录与软链", () => {
 			// allowDirs 指向 home，仍必须拒绝 ~/.ssh
 			const direct = inspectFile(secret, { allowDirs: [os.homedir()] });
 			assert.equal(direct.ok, false);
-			assert.match(direct.reason, /敏感路径/);
+			assert.match(direct.reason, /path is not allowed/);
 
 			const link = path.join(dir, "link.txt");
 			fs.symlinkSync(secret, link);
 			const viaLink = inspectFile(link, { allowDirs: [dir] });
 			assert.equal(viaLink.ok, false);
-			assert.match(viaLink.reason, /敏感路径/);
+			assert.match(viaLink.reason, /path is not allowed/);
 		} finally {
 			fs.rmSync(secret, { force: true });
 			if (!sshExisted) fs.rmSync(ssh, { recursive: true, force: true });

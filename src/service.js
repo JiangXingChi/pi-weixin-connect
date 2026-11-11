@@ -67,20 +67,20 @@ export function isServiceAlive(state, { now = Date.now(), staleMs = HEARTBEAT_ST
 }
 
 export function describeService(state, { now = Date.now(), staleMs = HEARTBEAT_STALE_MS } = {}) {
-	if (!state) return "未运行";
+	if (!state) return "not running";
 	const alive = isProcessAlive(state.pid);
 	const fresh = isServiceAlive(state, { now, staleMs });
 	const parsed = Date.parse(state.heartbeatAt ?? "");
 	const beat = Number.isFinite(parsed) ? Math.round((now - parsed) / 1000) : null;
-	const detail = !alive ? "进程已退出" : fresh ? "在线" : beat === null ? "心跳时间未知" : `心跳停了 ${beat}s`;
-	return `pid ${state.pid} · ${detail} · 会话 ${state.sessionId ?? "?"}`;
+	const detail = !alive ? "process exited" : fresh ? "online" : beat === null ? "heartbeat time unknown" : `heartbeat stopped ${beat}s ago`;
+	return `pid ${state.pid} · ${detail} · session ${state.sessionId ?? "?"}`;
 }
 
 /** 拉起后台服务（detached，父进程退出后仍在）。 */
 export function startService({ binPath, baseDir, cwd, sessionId = "pi-weixin-connect-service", nodePath = process.execPath }) {
 	const logFile = serviceLogPath(baseDir);
-	if (!fs.existsSync(binPath)) return { pid: null, logFile, error: `找不到启动脚本：${binPath}` };
-	if (!fs.existsSync(cwd)) return { pid: null, logFile, error: `工作目录不存在：${cwd}` };
+	if (!fs.existsSync(binPath)) return { pid: null, logFile, error: `start script not found: ${binPath}` };
+	if (!fs.existsSync(cwd)) return { pid: null, logFile, error: `working directory does not exist: ${cwd}` };
 	fs.mkdirSync(path.dirname(logFile), { recursive: true });
 	try {
 		if (fs.statSync(logFile).size > 5 * 1024 * 1024) fs.renameSync(logFile, `${logFile}.1`);
@@ -134,10 +134,10 @@ function looksLikeService(pid) {
 export async function stopService(state, { timeoutMs = 10_000, intervalMs = 200, force = false } = {}) {
 	if (!state || !isProcessAlive(state.pid)) return { stopped: true, reason: "already-exited" };
 	if (!force && !isServiceAlive(state)) {
-		return { stopped: false, reason: `pid ${state.pid} 还活着但心跳已停，确认后用 /wx stop --force` };
+		return { stopped: false, reason: `pid ${state.pid} is alive but the heartbeat stopped; run /wx stop --force after confirming` };
 	}
 	if (force && !looksLikeService(state.pid)) {
-		return { stopped: false, reason: `pid ${state.pid} 看起来不是 pi-weixin-connect，拒绝强制结束` };
+		return { stopped: false, reason: `pid ${state.pid} does not look like pi-weixin-connect; refusing to force-kill` };
 	}
 	try {
 		process.kill(state.pid, "SIGTERM");
@@ -149,7 +149,7 @@ export async function stopService(state, { timeoutMs = 10_000, intervalMs = 200,
 		if (!isProcessAlive(state.pid)) return { stopped: true };
 		await new Promise((resolve) => setTimeout(resolve, intervalMs));
 	}
-	return { stopped: false, reason: `进程 ${state.pid} 在 ${timeoutMs}ms 内没有退出` };
+	return { stopped: false, reason: `process ${state.pid} did not exit within ${timeoutMs}ms` };
 }
 
 /** 当前进程是不是后台服务（launcher 注入 env，pi 的 ppid = launcher）。
@@ -184,7 +184,7 @@ export async function startManagedService({ binPath, baseDir, cwd, sessionId = "
 		const systemdError = res.error
 			? res.error.message
 			: res.status !== 0
-				? (res.stderr || res.stdout || `systemctl 退出码 ${res.status}`).trim()
+				? (res.stderr || res.stdout || `systemctl exited with ${res.status}`).trim()
 				: "";
 		if (!systemdError) {
 			usedSystemd = true;
@@ -192,7 +192,7 @@ export async function startManagedService({ binPath, baseDir, cwd, sessionId = "
 			// 容器 / 没有 user bus / 残留 unit：不要卡死在 systemd 上，退回 detached 启动
 			const started = startService({ binPath, baseDir, cwd, sessionId });
 			if (!started.pid) {
-				return { pid: null, logFile, systemd: false, error: `${systemdError}；回退启动失败：${started.error ?? "未知原因"}` };
+				return { pid: null, logFile, systemd: false, error: `${systemdError}; fallback start failed: ${started.error ?? "unknown reason"}` };
 			}
 		}
 	} else {
@@ -206,5 +206,5 @@ export async function startManagedService({ binPath, baseDir, cwd, sessionId = "
 		if (state && isServiceAlive(state)) return { pid: state.pid, logFile, systemd: usedSystemd };
 		await new Promise((resolve) => setTimeout(resolve, 200));
 	}
-	return { pid: null, logFile, systemd: usedSystemd, error: "服务没有在 8 秒内上线" };
+	return { pid: null, logFile, systemd: usedSystemd, error: "service did not come online within 8s" };
 }

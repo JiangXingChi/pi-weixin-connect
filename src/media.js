@@ -125,17 +125,17 @@ function isDenied(filePath, allowDirs) {
 /** 校验出站文件；返回 {ok, size, kind, reason}。 */
 export function inspectFile(filePath, { maxBytes = CDN_MAX_BYTES, allowDirs = [] } = {}) {
 	const resolved = realPath(String(filePath ?? ""));
-	if (isDenied(resolved, allowDirs)) return { ok: false, reason: "敏感路径，拒绝发送", path: resolved };
+	if (isDenied(resolved, allowDirs)) return { ok: false, reason: "path is not allowed", path: resolved };
 	let stat;
 	try {
 		stat = fs.statSync(resolved);
 	} catch {
-		return { ok: false, reason: "文件不存在", path: resolved };
+		return { ok: false, reason: "file not found", path: resolved };
 	}
-	if (!stat.isFile()) return { ok: false, reason: "不是普通文件", path: resolved };
+	if (!stat.isFile()) return { ok: false, reason: "not a regular file", path: resolved };
 	const { mediaType, kind, maxBytes: limit } = mediaKindForFile(resolved);
 	const cap = Math.min(maxBytes, limit);
-	if (stat.size > cap) return { ok: false, reason: `超过上限 ${Math.round(cap / 1048576)}MB`, path: resolved };
+	if (stat.size > cap) return { ok: false, reason: `exceeds the ${Math.round(cap / 1048576)}MB limit`, path: resolved };
 	return { ok: true, size: stat.size, kind, mediaType, path: resolved, name: path.basename(resolved) };
 }
 
@@ -155,7 +155,7 @@ export function parseFileMarkers(text, { maxCount = 3, maxBytes = CDN_MAX_BYTES,
 			return "";
 		}
 		if (files.length + skipped.length >= maxCount + 5) {
-			skipped.push({ path: filePath, reason: "标记太多" });
+			skipped.push({ path: filePath, reason: "too many file markers" });
 			return "";
 		}
 		const check = inspectFile(filePath, { maxBytes, allowDirs });
@@ -164,14 +164,14 @@ export function parseFileMarkers(text, { maxCount = 3, maxBytes = CDN_MAX_BYTES,
 			return "";
 		}
 		if (files.length >= maxCount) {
-			skipped.push({ path: filePath, reason: `最多 ${maxCount} 个` });
+			skipped.push({ path: filePath, reason: `at most ${maxCount} files` });
 			return "";
 		}
 		files.push({ path: check.path, name: check.name, kind: check.kind, mediaType: check.mediaType, size: check.size });
 		return "";
 	});
 	if (disabled && disabledCount > 0) {
-		skipped.push({ path: "", reason: "文件发送已关闭", count: disabledCount });
+		skipped.push({ path: "", reason: "file sending is disabled", count: disabledCount });
 	}
 	return { text: kept.trim(), files, skipped };
 }
@@ -181,7 +181,7 @@ function uploadUrl(uploadFullUrl, uploadParam, filekey, cdnBaseUrl) {
 	if (uploadParam) {
 		return `${cdnBaseUrl}/upload?encrypted_query_param=${encodeURIComponent(uploadParam)}&filekey=${encodeURIComponent(filekey)}`;
 	}
-	throw new Error("getuploadurl 没有返回上传地址");
+	throw new Error("getuploadurl returned no upload url");
 }
 
 /**
@@ -219,13 +219,13 @@ export async function uploadFile(api, token, { to, filePath, mediaType, cdnBaseU
 			});
 			if (res.status >= 400 && res.status < 500) {
 				const msg = res.headers.get("x-error-message") ?? `HTTP ${res.status}`;
-				throw new Error(`CDN 客户端错误 ${res.status}: ${msg}`);
+				throw new Error(`CDN client error ${res.status}: ${msg}`);
 			}
 			if (res.status !== 200) {
-				throw new Error(`CDN 服务端错误 HTTP ${res.status}`);
+				throw new Error(`CDN server error HTTP ${res.status}`);
 			}
 			const downloadParam = res.headers.get("x-encrypted-param");
-			if (!downloadParam) throw new Error("CDN 响应缺少 x-encrypted-param");
+			if (!downloadParam) throw new Error("CDN response is missing x-encrypted-param");
 			return {
 				media: {
 					encrypt_query_param: downloadParam,
@@ -238,30 +238,30 @@ export async function uploadFile(api, token, { to, filePath, mediaType, cdnBaseU
 			};
 		} catch (err) {
 			lastError = err;
-			if (/客户端错误/.test(String(err?.message))) break;
+			if (/^CDN client error /.test(String(err?.message))) break;
 			log?.warn(`CDN 上传失败 ${attempt}/3：${err?.message ?? err}`);
 			await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
 		}
 	}
-	throw lastError ?? new Error("CDN 上传失败");
+	throw lastError ?? new Error("CDN upload failed");
 }
 
 /** 下载 CDN 媒体并解密；返回 Buffer。 */
 export async function downloadMedia({ media, itemAeskey, cdnBaseUrl, maxBytes = CDN_MAX_BYTES, requireKey = false }) {
-	if (!media?.full_url && !media?.encrypt_query_param) throw new Error("媒体缺少下载参数");
+	if (!media?.full_url && !media?.encrypt_query_param) throw new Error("media is missing download parameters");
 	const url =
 		media.full_url?.trim() ||
 		`${cdnBaseUrl}/download?encrypted_query_param=${encodeURIComponent(media.encrypt_query_param)}`;
 	const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
-	if (!res.ok) throw new Error(`媒体下载 HTTP ${res.status}`);
+	if (!res.ok) throw new Error(`media download HTTP ${res.status}`);
 	const declared = Number(res.headers.get("content-length"));
-	if (Number.isFinite(declared) && declared > maxBytes) throw new Error("媒体超过大小上限");
+	if (Number.isFinite(declared) && declared > maxBytes) throw new Error("media exceeds the size limit");
 	const ciphertext = Buffer.from(await res.arrayBuffer());
-	if (ciphertext.length > maxBytes) throw new Error("媒体超过大小上限");
+	if (ciphertext.length > maxBytes) throw new Error("media exceeds the size limit");
 
 	const key = parseAesKey(itemAeskey) ?? parseAesKey(media.aes_key);
 	if (!key) {
-		if (requireKey) throw new Error("媒体缺少解密密钥");
+		if (requireKey) throw new Error("media is missing its decryption key");
 		return ciphertext; // 明文图片
 	}
 	return decryptAesEcb(ciphertext, key);

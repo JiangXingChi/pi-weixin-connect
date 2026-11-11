@@ -166,7 +166,7 @@ function splitFenced(text, limit) {
 /** 分片 + (i/n)；超过 maxChunks 只发前几段并带提示。 */
 export function chunkText(
 	text,
-	{ chunkChars = MAX_CONTENT_CHARS, maxChunks = 9, overflowHint = "……（内容过长，已截断）" } = {},
+	{ chunkChars = MAX_CONTENT_CHARS, maxChunks = 9, overflowHint = "... (message too long, truncated)" } = {},
 ) {
 	const normalized = String(text ?? "").trim();
 	if (!normalized) return [];

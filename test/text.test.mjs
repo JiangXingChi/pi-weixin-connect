@@ -40,7 +40,7 @@ test("chunkText：不超过 4000，超出预算截断并带提示", () => {
 	const chunks = chunkText(text, { chunkChars: 4000, maxChunks: 9 });
 	assert.equal(chunks.length, 9);
 	for (const chunk of chunks) assert.ok(chunk.length <= 4000, `chunk too long: ${chunk.length}`);
-	assert.match(chunks[8], /内容过长/);
+	assert.match(chunks[8], /\.\.\. \(message too long, truncated\)$/);
 });
 
 test("chunkText：多段带 (i/n) 序号，代码围栏闭合", () => {

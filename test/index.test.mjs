@@ -57,13 +57,12 @@ test("index：后台服务在线时 session_start 不重复启动，status 标�
 		handlers.session_start({ reason: "startup" }, ctx);
 		await sleep(400);
 
-		assert.ok(!notes.some((n) => /正在重建/.test(n.message)), "不应误报会话重建");
-		assert.ok(!notes.some((n) => /已自动启动/.test(n.message)), "不应重复拉起后台服务");
+		assert.deepEqual(notes, [], "启动应静默：服务在线/自动启动都不再弹通知，只写日志");
 
 		await commands.wx.handler("status", ctx);
 		const report = notes.at(-1)?.message ?? "";
-		assert.match(report, /由后台服务承载/);
-		assert.match(report, /已登录/);
+		assert.match(report, /served by background service \(pid \d+\)/);
+		assert.match(report, /\(logged in\)/);
 	} finally {
 		holder.kill("SIGKILL");
 		if (oldConfig === undefined) delete process.env.PIWXCONNECT_CONFIG;
@@ -117,11 +116,11 @@ test("index：进程活着但心跳过期时不双开服务，/wx start 也拒�
 		createExtension(pi);
 		handlers.session_start({ reason: "startup" }, ctx);
 		await sleep(300);
-		assert.ok(notes.some((n) => /心跳已停/.test(n.message)), "应提示服务进程还在但心跳过期");
-		assert.ok(!notes.some((n) => /已自动启动/.test(n.message)), "不应双开服务");
+		assert.ok(notes.some((n) => /heartbeat stopped/.test(n.message)), "应提示服务进程还在但心跳过期");
+		assert.ok(!notes.some((n) => /started automatically/.test(n.message)), "不应双开服务");
 
 		await commands.wx.handler("start", ctx);
-		assert.match(notes.at(-1)?.message ?? "", /心跳已停/);
+		assert.match(notes.at(-1)?.message ?? "", /heartbeat stopped/);
 	} finally {
 		holder.kill("SIGKILL");
 		resetRuntimeForTests();

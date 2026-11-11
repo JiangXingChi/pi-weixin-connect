@@ -118,7 +118,7 @@ test("bridge：超长回答按预算 9 条截断", async () => {
 		assert.ok(await waitFor(() => mock.sent.length >= 9));
 		assert.equal(mock.sent.length, 9);
 		for (const sent of mock.sent) assert.ok(sent.msg.item_list[0].text_item.text.length <= 4000);
-		assert.match(mock.sent[8].msg.item_list[0].text_item.text, /内容过长/);
+		assert.match(mock.sent[8].msg.item_list[0].text_item.text, /\.\.\. \(truncated, message too long\)$/);
 	} finally {
 		await mock.close();
 	}

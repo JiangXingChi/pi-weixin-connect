@@ -79,7 +79,7 @@ test("api：外部 signal 存在时 timeoutMs 仍然生效", async () => {
 	const controller = new AbortController();
 	const started = Date.now();
 	try {
-		await assert.rejects(api.getUpdates("t", "", { signal: controller.signal, timeoutMs: 200 }), /请求超时/);
+		await assert.rejects(api.getUpdates("t", "", { signal: controller.signal, timeoutMs: 200 }), /request timed out/);
 		assert.ok(Date.now() - started < 2000);
 	} finally {
 		controller.abort();
@@ -97,7 +97,7 @@ test("api：200 但响应不是 JSON 视为失败，不返回空成功", async (
 	const { port } = server.address();
 	const api = new WeixinApi({ baseUrl: `http://127.0.0.1:${port}` });
 	try {
-		await assert.rejects(api.getUpdates("t", ""), /响应不是 JSON/);
+		await assert.rejects(api.getUpdates("t", ""), /response is not JSON/);
 	} finally {
 		server.closeAllConnections?.();
 		await new Promise((resolve) => server.close(resolve));
@@ -114,7 +114,7 @@ test("api：getupdates 的空响应不能被当成空成功", async () => {
 		const { port } = server.address();
 		const api = new WeixinApi({ baseUrl: `http://127.0.0.1:${port}` });
 		try {
-			await assert.rejects(api.getUpdates("t", ""), /空响应/);
+			await assert.rejects(api.getUpdates("t", ""), /getupdates returned an empty response/);
 		} finally {
 			server.closeAllConnections?.();
 			await new Promise((resolve) => server.close(resolve));
@@ -160,7 +160,7 @@ test("文件标记：files 关闭时剥离标记并给出原因", () => {
 	const parsed = parseFileMarkers("结果 [[file:/tmp/x.txt]] 如下", { disabled: true });
 	assert.equal(parsed.files.length, 0);
 	assert.equal(parsed.skipped.length, 1);
-	assert.match(parsed.skipped[0].reason, /文件发送已关闭/);
+	assert.match(parsed.skipped[0].reason, /file sending is disabled/);
 	assert.doesNotMatch(parsed.text, /\[\[file:/);
 
 	const many = parseFileMarkers("[[file:/a]][[file:/b]][[file:/c]]", { disabled: true });
@@ -181,7 +181,8 @@ test("bridge：files 关闭时不把 [[file:...]] 原样发到微信", async () 
 		await runTurn(bridge, mock, injected, "报告 [[file:/tmp/x.txt]] 如下");
 		const text = mock.sent[0].msg.item_list[0].text_item.text;
 		assert.doesNotMatch(text, /\[\[file:/);
-		assert.match(text, /文件未发送/);
+		assert.match(text, /file\(s\) not sent/);
+		assert.match(text, /file sending is disabled/);
 	} finally {
 		await mock.close();
 	}
@@ -196,8 +197,8 @@ test("bridge：只剩被拒绝的文件标记时也回一条说明", async () =>
 		await runTurn(bridge, mock, injected, "[[file:/etc/passwd]]");
 		assert.equal(mock.sent.length, 1);
 		const text = mock.sent[0].msg.item_list[0].text_item.text;
-		assert.match(text, /文件未发送/);
-		assert.match(text, /敏感路径/);
+		assert.match(text, /file\(s\) not sent/);
+		assert.match(text, /path is not allowed/);
 	} finally {
 		await mock.close();
 	}

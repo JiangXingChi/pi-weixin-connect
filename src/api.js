@@ -83,7 +83,7 @@ export class WeixinApi {
 					// 200 + 非 JSON（反代门户页、HTML 错误页）必须当失败，
 					// 否则 getupdates 会把它当空结果，200ms 一次热轮询
 					if (res.ok) {
-						throw new ApiError(`响应不是 JSON：${method} ${url.pathname}`, {
+						throw new ApiError(`response is not JSON: ${method} ${url.pathname}`, {
 							status: res.status,
 							body: text.slice(0, 200),
 						});
@@ -117,7 +117,7 @@ export class WeixinApi {
 			return data ?? {};
 		} catch (err) {
 			if (err?.name === "AbortError") {
-				throw new ApiError(signal?.aborted ? `请求已取消：${path}` : `请求超时：${path}`, { status: 0 });
+				throw new ApiError(signal?.aborted ? `request cancelled: ${path}` : `request timed out: ${path}`, { status: 0 });
 			}
 			throw err;
 		} finally {
@@ -153,7 +153,7 @@ export class WeixinApi {
 		// 空对象意味着响应体是空的（#request 对空体返回 {}）。长轮询不能把这种
 		// 响应当成功，否则会 200ms 一次热循环。
 		if (!data || typeof data !== "object" || Object.keys(data).length === 0) {
-			throw new ApiError("getupdates 返回空响应", { status: 200 });
+			throw new ApiError("getupdates returned an empty response", { status: 200 });
 		}
 		return data;
 	}

@@ -17,9 +17,17 @@ import { randomInt } from "node:crypto";
 
 import { downloadMedia, parseFileMarkers, sniffImageMime, uploadFile } from "./media.js";
 import { buildPrompt, chunkText, isAllowed, maskId, stripMarkdown } from "./text.js";
+import { CODE, err } from "./i18n.js";
 
 export function isStaleContextError(err) {
 	return /stale after session replacement or reload/i.test(String(err?.message ?? err ?? ""));
+}
+
+function parseChatCommand(text) {
+	const trimmed = String(text ?? "").trim();
+	const match = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(trimmed);
+	if (!match) return null;
+	return { name: match[1].toLowerCase(), raw: match[1], args: (match[2] ?? "").trim() };
 }
 
 export function retryDelayFor(count) {
@@ -39,7 +47,7 @@ function messageText(message) {
 }
 
 export class WeixinBridge {
-	constructor({ pi, api, config, log, notify, credentials, onExpired, injectTimeoutMs = 5000 }) {
+	constructor({ pi, api, config, log, notify, credentials, onExpired, onCommand, injectTimeoutMs = 5000 }) {
 		this.pi = pi;
 		this.api = api;
 		this.cfg = config;
@@ -47,6 +55,7 @@ export class WeixinBridge {
 		this.notify = notify ?? (() => {});
 		this.credentials = credentials;
 		this.onExpired = onExpired ?? (() => {});
+		this.onCommand = onCommand ?? (async () => null);
 
 		this.queue = [];
 		this.deferred = [];
@@ -128,11 +137,8 @@ export class WeixinBridge {
 	}
 
 	cancelSwitch() {
-		this.switching = false;
-		if (this.switchTimer) {
-			clearTimeout(this.switchTimer);
-			this.switchTimer = undefined;
-		}
+		// 失败也要把暂存消息放回队列，否则它们会卡到下一次成功切换
+		this.endSwitch();
 	}
 
 	/** 入队；返回 {accepted, reason}。 */
@@ -265,11 +271,11 @@ export class WeixinBridge {
 			}
 			const text = inflight.texts.join("\n\n").trim() || this.cfg.emptyReply;
 			await this.#deliver(inflight, text);
-		} catch (err) {
+		} catch (cause) {
 			this.stats.failed++;
-			this.log?.error(`回复失败：${err?.stack ?? err}`);
-			this.notify(`微信回复失败：${err?.message ?? err}`, "warning");
-			if (isSessionExpired(err)) this.onExpired(err);
+			this.log?.error(`回复失败：${cause?.stack ?? cause}`);
+			this.notify(err(CODE.REPLY_FAILED, "failed to send weixin reply", cause?.message ?? cause), "warning");
+			if (isSessionExpired(cause)) this.onExpired(cause);
 		} finally {
 			this.finishing = false;
 			void this.pump();
@@ -305,6 +311,29 @@ export class WeixinBridge {
 
 	async #pumpOnce() {
 		const item = this.queue.shift();
+		const command = parseChatCommand(item.text);
+		if (command) {
+			this.finishing = true;
+			let reply = null;
+			try {
+				reply = await this.onCommand(command, item);
+			} catch (err) {
+				this.log?.error(`command failed: ${err?.message ?? err}`);
+			} finally {
+				this.finishing = false;
+			}
+			if (reply) {
+				try {
+					await this.replyCommand(item, reply);
+				} catch (cause) {
+					this.stats.failed++;
+					this.notify(err(CODE.REPLY_FAILED, "failed to send weixin reply", cause?.message ?? cause), "warning");
+					if (isSessionExpired(cause)) this.onExpired(cause);
+				}
+				return;
+			}
+			// null = not one of our commands: fall through and treat it as a normal message
+		}
 		let images = [];
 		let files = [];
 		let prompt;
@@ -366,7 +395,7 @@ export class WeixinBridge {
 		const cfg = this.cfg.images ?? {};
 		if (!cfg.enabled || !item.images?.length) return [];
 		const list = item.images.slice(0, Math.max(0, cfg.maxCount ?? 2));
-		if (item.images.length > list.length) notes.push(`（另有 ${item.images.length - list.length} 张图片未下载）`);
+		if (item.images.length > list.length) notes.push(`(${item.images.length - list.length} more images not downloaded)`);
 		const results = await Promise.all(
 			list.map(async (image) => {
 				try {
@@ -376,11 +405,11 @@ export class WeixinBridge {
 						cdnBaseUrl: this.cfg.endpoints.cdn,
 						maxBytes: cfg.maxBytes ?? 8 * 1024 * 1024,
 					});
-					if (!buf?.length) throw new Error("空文件");
+					if (!buf?.length) throw new Error("empty file");
 					return { type: "image", data: buf.toString("base64"), mimeType: sniffImageMime(buf) };
 				} catch (err) {
 					this.log?.warn(`入站图片下载失败：${err?.message ?? err}`);
-					notes.push("[图片下载失败]");
+					notes.push("[image download failed]");
 					return null;
 				}
 			}),
@@ -409,17 +438,17 @@ export class WeixinBridge {
 				const target = path.join(dir, `${Date.now()}-${randomInt(1000, 9999)}-${safe}`);
 				fs.writeFileSync(target, buf, { mode: 0o600 });
 				saved.push(target);
-				notes.push(`[文件] ${file.name} → ${target}`);
+				notes.push(`[file] ${file.name} → ${target}`);
 			} catch (err) {
 				this.log?.warn(`入站文件下载失败：${err?.message ?? err}`);
-				notes.push(`[文件下载失败] ${file.name}`);
+				notes.push(`[file download failed] ${file.name}`);
 			}
 		}
 		return saved;
 	}
 
-	#failOnStale(item, err) {
-		const reason = err?.message ?? String(err);
+	#failOnStale(item, cause) {
+		const reason = cause?.message ?? String(cause);
 		const first = !this.stale;
 		this.stale = true;
 		this.injecting = false;
@@ -427,7 +456,7 @@ export class WeixinBridge {
 		if (item) this.queue.unshift(item);
 		if (first) {
 			this.log?.error(`会话已被替换，暂停注入直到新会话接棒：${reason}`);
-			this.notify("微信桥已暂停：Pi 会话被替换，等新会话接手后自动恢复", "warning");
+			this.notify(err(CODE.BRIDGE_PAUSED, "weixin bridge paused: pi session was replaced; it resumes when the new session takes over"), "warning");
 		}
 	}
 
@@ -472,6 +501,12 @@ export class WeixinBridge {
 		}
 	}
 
+	/** 直接回复一条命令回执（不进入模型）。 */
+	async replyCommand(item, text) {
+		const inflight = { item, texts: [], attemptsLeft: this.cfg.maxChunks };
+		await this.#deliver(inflight, text);
+	}
+
 	async #deliver(inflight, text) {
 		if (this.stopped) return;
 		const { item } = inflight;
@@ -487,7 +522,7 @@ export class WeixinBridge {
 		const last = this.lastInboundAt.get(target) || item.at || Date.now();
 		if (Date.now() - last > windowMs) {
 			this.log?.warn("已超过 24 小时窗口，回复未发送");
-			this.notify("微信 24 小时窗口已过：请在微信里先发一条消息，再重试", "warning");
+			this.notify(err(CODE.WINDOW_EXPIRED, "weixin 24h window closed; send a message in WeChat first, then retry"), "warning");
 			return;
 		}
 
@@ -509,21 +544,21 @@ export class WeixinBridge {
 				.slice(0, 3)
 				.map((skip) => {
 					const name = path.basename(String(skip.path || ""));
-					return name ? `${name}：${skip.reason}` : skip.reason;
+					return name ? `${name}: ${skip.reason}` : skip.reason;
 				})
-				.join("；");
-			body = [body, `（${skippedCount} 个文件未发送：${detail}）`].filter(Boolean).join("\n");
+				.join("; ");
+			body = [body, `(${skippedCount} file(s) not sent: ${detail})`].filter(Boolean).join("\n");
 		}
 		const textBudget = Math.max(1, inflight.attemptsLeft - parsed.files.length);
 		const chunks = chunkText(body, {
 			chunkChars: this.cfg.chunkChars,
 			maxChunks: Math.min(textBudget, this.cfg.maxChunks),
-			overflowHint: "……（内容过长，已截断）",
+			overflowHint: "... (truncated, message too long)",
 		});
 
 		for (const chunk of chunks) {
 			if (this.stopped) return;
-			await this.#sendWithRetry("文本", () =>
+			await this.#sendWithRetry("text", () =>
 				this.api.sendText(this.credentials.token, { to: target, contextToken, text: chunk }),
 			);
 			this.stats.sent++;
@@ -545,7 +580,7 @@ export class WeixinBridge {
 					cdnBaseUrl: this.cfg.endpoints.cdn,
 					log: this.log,
 				});
-				await this.#sendWithRetry("媒体", () =>
+				await this.#sendWithRetry("media", () =>
 					this.api.sendItems(this.credentials.token, {
 						to: target,
 						contextToken,
@@ -559,11 +594,11 @@ export class WeixinBridge {
 				this.stats.failed++;
 				this.log?.error(`文件发送失败 ${file.path}：${err?.stack ?? err}`);
 				if (inflight.attemptsLeft > 0) {
-					await this.#sendWithRetry("失败提示", () =>
+					await this.#sendWithRetry("notice", () =>
 						this.api.sendText(this.credentials.token, {
 							to: target,
 							contextToken,
-							text: `（文件发送失败：${file.name} — ${err?.message ?? err}）`,
+							text: `(file send failed: ${file.name} — ${err?.message ?? err})`,
 						}),
 					);
 					this.stats.sent++;
@@ -578,7 +613,7 @@ export class WeixinBridge {
 		let lastError;
 		for (let i = 0; i < attempts; i++) {
 			try {
-				if (this.stopped) throw new Error("桥已停止");
+				if (this.stopped) throw new Error("bridge is stopped");
 				return await fn();
 			} catch (err) {
 				lastError = err;
@@ -588,11 +623,11 @@ export class WeixinBridge {
 				const retryableStatus = [408, 425, 429].includes(status);
 				const fatal = (status >= 400 && status < 500 && !retryableStatus) || business;
 				if (fatal) throw err;
-				this.log?.warn(`${label}发送失败 ${i + 1}/${attempts}：${err?.message ?? err}`);
+				this.log?.warn(`${label} send failed ${i + 1}/${attempts}: ${err?.message ?? err}`);
 				if (i + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 500 * (i + 1)));
 			}
 		}
-		throw lastError ?? new Error(`${label}发送失败`);
+		throw lastError ?? new Error(`${label} send failed`);
 	}
 
 	// ── 输入状态 ──────────────────────────────────────────────────────
